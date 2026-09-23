@@ -1,0 +1,33 @@
+{
+  "name": "openre-stream",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenRe.Stream: ingest and restream authority for the OpenVibe network. Stream definitions, hashed ingest keys, ingest sessions, transport workers with generations and leases, restream outputs with health and logs, recording requests to OpenVibe.Media.",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "NODE_ENV=development node server/index.js",
+    "coordinator": "node workers/coordinator.js",
+    "rtmp-ingest": "node workers/rtmp-ingest.js",
+    "restream-worker": "node workers/restream-worker.js",
+    "migrate-from-live": "node scripts/migrate-from-live.js",
+    "test": "node test/run.js"
+  },
+  "keywords": ["openvibe", "openre", "rtmp", "restream", "ingest"],
+  "author": "OpenVibers",
+  "license": "AGPL-3.0-only",
+  "repository": "github:OpenVibers/OpenRe.Stream",
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "node-media-server": "2.7.4",
+    "openvibe-contracts": "https://codeload.github.com/OpenVibers/OpenVibe.Contracts/tar.gz/refs/tags/v0.8.0",
+    "openvibe-sdk": "https://codeload.github.com/OpenVibers/OpenVibe.SDK/tar.gz/refs/tags/v0.2.2",
+    "openvibe-shared": "https://codeload.github.com/OpenVibers/OpenVibe.Shared/tar.gz/refs/tags/v1.0.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
