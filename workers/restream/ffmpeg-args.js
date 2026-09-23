@@ -123,7 +123,16 @@ function friendlyError(raw, platform = 'the destination') {
     if (/Unrecognized option|Invalid argument|Option .* not found/i.test(t)) return `Encoder configuration was rejected by ffmpeg (${t.slice(0, 80)})`;
     if (/No such file|not found/i.test(t) && /ffmpeg/i.test(t)) return 'ffmpeg is not installed on the server';
     if (!t.trim()) return 'Restream process stopped without a message';
-    return t.slice(0, 160);
+    return redactText(t).slice(0, 160);
+}
+
+/** Redact every rtmp(s)/srt URL inside a free text (ffmpeg stderr echoes its output URL). */
+function redactText(text) {
+    return String(text || '').replace(/(?:rtmps?|srt):\/\/[^\s'"|]+/gi, (u) => {
+        const tail = /[:;,.)\]]+$/.exec(u);
+        const url = tail ? u.slice(0, -tail[0].length) : u;
+        return redactUrl(url) + (tail ? tail[0] : '');
+    });
 }
 
 /** Mask keys in URLs before anything is logged (rtmp path key, SRT streamid/passphrase). */
@@ -141,5 +150,5 @@ function redactUrl(value) {
 
 module.exports = {
     QUALITY_PRESETS, PLATFORM_DEFAULT_PRESET, ENCODER_PRESETS, SRT_DEFAULT_LATENCY_MS,
-    isSrtUrl, buildDestUrl, buildSrtUrl, outputArgs, rtmpCopyArgs, withProgress, resolvePreset, customOverrides, encodingArgs, friendlyError, redactUrl,
+    isSrtUrl, buildDestUrl, buildSrtUrl, outputArgs, rtmpCopyArgs, withProgress, resolvePreset, customOverrides, encodingArgs, friendlyError, redactUrl, redactText,
 };

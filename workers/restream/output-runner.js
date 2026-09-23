@@ -8,12 +8,14 @@
  */
 const { spawn } = require('child_process');
 const fs = require('fs');
-const { rtmpCopyArgs, withProgress, buildDestUrl, friendlyError, redactUrl } = require('./ffmpeg-args');
+const { rtmpCopyArgs, withProgress, buildDestUrl, friendlyError, redactUrl, redactText } = require('./ffmpeg-args');
 const { validateDestinationUrl, checkResolvedHost } = require('../../server/destination-url');
 
 class OutputRunner {
-    constructor({ outputId, destinationId, inputUrl, store, config, log = console, spawnImpl = spawn, lookup }) {
+    constructor({ outputId, destinationId, inputUrl, store, config, log = console, spawnImpl = spawn, lookup, workerId = null }) {
         this.outputId = outputId;
+        this.workerId = workerId;
+        this.secrets = [];
         this.destinationId = destinationId;
         this.inputUrl = inputUrl;
         this.store = store;
@@ -40,8 +42,15 @@ class OutputRunner {
         return t;
     }
 
-    report(change) { try { return this.store.outputs.report(this.outputId, change); } catch (err) { this.log.error(`[restream] report ${this.outputId}: ${err.message}`); return null; } }
-    note(level, message) { try { this.store.outputs.log(this.outputId, this.destinationId, level, message); } catch { /* logs are best effort */ } }
+    report(change) { try { return this.store.outputs.report(this.outputId, change, { workerId: this.workerId }); } catch (err) { this.log.error(`[restream] report ${this.outputId}: ${err.message}`); return null; } }
+    note(level, message) { try { this.store.outputs.log(this.outputId, this.destinationId, level, this.scrub(message)); } catch { /* logs are best effort */ } }
+
+    /** ffmpeg's stderr can echo the output URL: never let a destination key reach a log or event. */
+    scrub(text) {
+        let t = redactText(text);
+        for (const s of this.secrets) if (s && s.length >= 4) t = t.split(s).join('****');
+        return t;
+    }
 
     async start() {
         if (this.stopped) return;
@@ -51,6 +60,7 @@ class OutputRunner {
         }
         if (!dest || !dest.enabled || dest.hold_reason) return this.stop('destination disabled');
         this.platform = dest.platform || 'custom';
+        this.secrets = [dest.stream_key, dest.srt_passphrase].filter(Boolean);
         const v = validateDestinationUrl(dest.server_url, { allowPrivate: this.o.allowPrivateHosts });
         if (!v.ok) return this.fail(v.error, { cooldown: false });
         const resolved = await checkResolvedHost(v.host, { allowPrivate: this.o.allowPrivateHosts, ...(this.lookup ? { lookup: this.lookup } : {}) });
@@ -160,9 +170,9 @@ class OutputRunner {
             this.stopped = true;
             return;
         }
-        const message = this.ackTimeout
+        const message = this.scrub(this.ackTimeout
             ? `No response from the ingest within ${this.o.liveAckTimeoutMs / 1000}s — ${friendlyError(raw, this.platform)}`
-            : friendlyError(raw || `ffmpeg exit code ${code}`, this.platform);
+            : friendlyError(raw || `ffmpeg exit code ${code}`, this.platform));
         this.ackTimeout = false;
         this.note('error', `ffmpeg exited (code ${code}) after ${(ran / 1000).toFixed(1)}s: ${message}`);
         this.status = 'error';
@@ -193,6 +203,7 @@ class OutputRunner {
     /** The circuit breaker: this output is done; the destination may cool down. */
     fail(message, { cooldown }) {
         if (this.stopped) return;
+        message = this.scrub(message);
         this.stopped = true;
         this.clearTimers();
         let cooldownMinutes = null;

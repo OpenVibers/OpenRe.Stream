@@ -74,6 +74,9 @@ t('a worker without heartbeats is lost: its sessions fail (session.failed) and i
     assert.strictEqual(rt.store.sessions.get(a.session.id).state, 'live', 'a lost restream worker never ends the source session');
     assert.strictEqual(rt.store.outputs.getOutput(out.id).state, 'pending');
     assert.strictEqual(rt.store.outputs.getOutput(out.id).worker, null);
+    // The lost worker waking up and stopping its ffmpeg must not overwrite the released output.
+    assert.strictEqual(rt.store.outputs.report(out.id, { state: 'stopped' }, { workerId: rs.id }), null);
+    assert.strictEqual(rt.store.outputs.getOutput(out.id).state, 'pending');
     // A new restream generation picks it up.
     const rs2 = worker('restream');
     assert.strictEqual(coordinator.syncTick().outputsAssigned, 1);

@@ -18,6 +18,14 @@
  * The heartbeat (every heartbeatMs) is also the lease renewal for every session the worker owns.
  * A worker never depends on openre-api being up; it needs only the database.
  */
+/** Run a cleanup hook, but never let it keep the process from exiting (5 s at most). */
+function settle(fn) {
+    return Promise.race([
+        Promise.resolve().then(() => fn && fn()).catch(() => {}),
+        new Promise((r) => { const t = setTimeout(r, 5000); t.unref?.(); }),
+    ]);
+}
+
 function createWorkerRuntime({ rt, kind, log = console, hooks = {}, exit = (code) => process.exit(code) }) {
     const { store, config } = rt;
     let me = null;
@@ -48,7 +56,7 @@ function createWorkerRuntime({ rt, kind, log = console, hooks = {}, exit = (code
             log.error(`[${kind}] coordinator marked ${me.id} lost; dropping transports and exiting`);
             stopped = true;
             clearTimeout(timer);
-            Promise.resolve(hooks.onLost && hooks.onLost()).finally(() => exit(1));
+            settle(hooks.onLost).finally(() => exit(1));
             return row;
         }
         if (row.state === 'draining' && !draining) {
@@ -99,7 +107,7 @@ function createWorkerRuntime({ rt, kind, log = console, hooks = {}, exit = (code
         clearTimeout(timer);
         store.workers.stop(me.id, draining ? 'drained' : 'exit');
         log.log(`[${kind}] generation ${me.generation} idle after drain; exiting`);
-        Promise.resolve(hooks.onExit && hooks.onExit()).finally(() => exit(0));
+        settle(hooks.onExit).finally(() => exit(0));
         return true;
     }
 

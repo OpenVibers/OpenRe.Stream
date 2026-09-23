@@ -105,6 +105,9 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
         const s = nms(id);
         if (!s) return;
         const reject = (why) => { log.log(`[rtmp] publish refused (${why}) from ${s.ip}`); s.reject(); };
+        // A second publish on a connection that already publishes: leave it to node-media-server,
+        // which answers NetStream.Publish.BadConnection without touching the first stream.
+        if (publishers.has(id)) return undefined;
         if (!isPublicSocket(s)) return reject('not the public listener');
         if (runtime.draining || !runtime.me || runtime.me.state !== 'ready') return reject('generation not taking sessions');
         if (publishers.size >= config.rtmp.maxPublishersPerWorker) return reject('worker full');
@@ -188,7 +191,12 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
         closePublic();
         const closing = [];
         for (const srv of [playServer, flvServer]) {
-            if (srv) closing.push(new Promise(r => { srv.closeAllConnections?.(); srv.close(() => r()); }));
+            if (!srv) continue;
+            // Loopback players (Media's recorder, restream ffmpeg, the playback proxy) would keep
+            // close() waiting forever: node-media-server parks them as idle players.
+            for (const sock of srv.openSockets || []) sock.destroy();
+            srv.closeAllConnections?.();
+            closing.push(new Promise(r => srv.close(() => r())));
         }
         playServer = null;
         flvServer = null;
@@ -197,10 +205,14 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
     }
 
     function newRtmpServer() {
-        return net.createServer((socket) => {
+        const srv = net.createServer((socket) => {
+            srv.openSockets.add(socket);
+            socket.on('close', () => srv.openSockets.delete(socket));
             const session = new NodeRtmpSession(nmsConfig, socket);
             session.run();
         });
+        srv.openSockets = new Set();
+        return srv;
     }
 
     async function start() {

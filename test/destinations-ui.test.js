@@ -41,6 +41,8 @@ t('ffmpeg arguments match Live: codec copy from HTTP-FLV, platform URL fixes, SR
     assert.strictEqual(ff.redactUrl('rtmps://live.twitch.tv/app/live_123456789'), 'rtmps://live.twitch.tv/app/****6789');
     assert.ok(!ff.redactUrl('srt://h:1?streamid=secret&passphrase=pw12345678').includes('secret'));
     assert.match(ff.friendlyError('Connection refused', 'twitch'), /Twitch's ingest server/);
+    const echoed = ff.friendlyError('Error opening output rtmp://ingest.example/app/sekrit_key_9999: Operation not permitted');
+    assert.ok(!echoed.includes('sekrit_key_9999') && echoed.includes('****9999'), echoed);
     assert.match(ff.friendlyError('NetStream.Publish.BadName', 'youtube'), /Youtube rejected the stream key/);
 });
 

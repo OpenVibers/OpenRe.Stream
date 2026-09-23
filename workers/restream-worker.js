@@ -47,7 +47,7 @@ function createRestreamWorker({ rt, log = console, exit = (code) => process.exit
             const session = store.sessions.get(row.session_id);
             const shouldRun = row.desired === 'run' && session && session.state === 'live';
             if (!shouldRun) {
-                if (runner) { runner.stop(row.desired === 'stop' ? 'stop requested' : 'session not live'); runners.delete(row.id); } else store.outputs.report(row.id, { state: 'stopped', ended_at: Date.now() });
+                if (runner) { runner.stop(row.desired === 'stop' ? 'stop requested' : 'session not live'); runners.delete(row.id); } else store.outputs.report(row.id, { state: 'stopped', ended_at: Date.now() }, { workerId: runtime.me.id });
                 continue;
             }
             if (runner && runner.stopped) { runners.delete(row.id); runner = null; continue; }
@@ -56,10 +56,10 @@ function createRestreamWorker({ rt, log = console, exit = (code) => process.exit
             // goes back to the coordinator for the newest generation.
             if (runtime.draining) { store.outputs.unassign(row.id); seen.delete(row.id); continue; }
             const input = inputUrlFor(session);
-            if (!input) { store.outputs.report(row.id, { state: 'failed', last_error: `restream from ${session.protocol} sessions is not supported by OpenRe yet`, ended_at: Date.now() }); continue; }
+            if (!input) { store.outputs.report(row.id, { state: 'failed', last_error: `restream from ${session.protocol} sessions is not supported by OpenRe yet`, ended_at: Date.now() }, { workerId: runtime.me.id }); continue; }
             // Let the ingest settle before pulling (Live waits 3 s for node-media-server's FLV).
             if (session.live_at && Date.now() - session.live_at < config.outputs.startDelayMs) continue;
-            runner = new OutputRunner({ outputId: row.id, destinationId: row.destination_id, inputUrl: input, store, config, log, spawnImpl, lookup });
+            runner = new OutputRunner({ outputId: row.id, destinationId: row.destination_id, inputUrl: input, store, config, log, spawnImpl, lookup, workerId: runtime.me.id });
             runners.set(row.id, runner);
             runner.start().catch((err) => runner.fail(err.message, { cooldown: false }));
         }

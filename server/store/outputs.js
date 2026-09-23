@@ -273,10 +273,16 @@ function createOutputs({ db, config, events, clock, box, definitions, sessions }
     }
 
     /** State changes reported by the restream worker, with the events they imply. */
-    function report(outputId, change) {
+    /**
+     * State reported by a restream worker. With { workerId }, the report only lands while the output
+     * is still assigned to that worker: a worker the coordinator has given up (lost) or that handed
+     * the output over must not overwrite what the new owner does.
+     */
+    function report(outputId, change, { workerId } = {}) {
         return db.transaction(() => {
             const o = q.getOut.get(outputId);
             if (!o) return null;
+            if (workerId && o.worker_id !== workerId) return null;
             const set = { updated_at: now() };
             for (const k of ['state', 'last_error', 'restart_attempts', 'next_restart_at', 'started_at', 'live_at', 'ended_at']) {
                 if (change[k] !== undefined) set[k] = change[k];
