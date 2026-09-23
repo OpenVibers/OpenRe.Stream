@@ -8,9 +8,11 @@
  *   node scripts/migrate-from-live.js --live-db /path/to/live-snapshot.db --apply    # write
  *   ... [--slots 12,31] [--checklist /path/to/checklist.md]
  *
- * Take the snapshot with `sqlite3 /opt/openvibe.live/data/openvibe.db ".backup /tmp/live-snapshot.db"`
- * (never point this at the live file). Uses the OpenRe environment (.env or OPENRE_ENV_FILE) for
- * its own database and OPENRE_SECRETS_KEY. Prints no secret: old keys are not imported and the new
+ * Take the snapshot with `sqlite3 /opt/openvibe.live/data/live.db ".backup /tmp/live-snapshot.db"`
+ * (Live's DB_PATH in production; never point this at the live file). Uses the OpenRe environment
+ * (.env or OPENRE_ENV_FILE) for its own database and OPENRE_SECRETS_KEY; in production set
+ * OPENRE_ENV_FILE=/etc/openvibe/openre.env, OPENRE_DB_PATH=/var/lib/openre/openre.db and
+ * NODE_ENV=production (the units set the last two themselves) — docs/cutover.md has the command. Prints no secret: old keys are not imported and the new
  * keys are never shown (the broadcaster rotates to get one). Safe to re-run.
  */
 const fs = require('fs');

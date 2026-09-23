@@ -157,6 +157,8 @@ sudo deploy/scripts/deploy.sh status
 
 - An **API deploy** never restarts a worker unit (no unit depends on another). Viewers of `openre.stream/play/…` reconnect; encoders, restreams and recordings do not notice.
 - A **worker deploy** starts `openre-rtmp-ingest@<sha>` and `openre-restream-worker@<sha>`; older instances are disabled (not stopped) and exit on their own when drained. Never `systemctl restart` a worker instance during a broadcast; `systemctl stop` starts a drain and waits up to 30 min (`TimeoutStopSec`), then kills.
+- Worker instances are named after the release. `deploy.sh workers <sha>` for a release that already runs a generation does nothing. An env change that workers read, such as `OPENRE_RTMP_BIND`, takes effect with the next release's generation (docs/cutover.md A3).
+- **Restore drills** (`ovhost drill openre`, OpenVibe.Host) start only `openre-api`, with `OPENRE_DRILL=1`, on a restored copy of the database. In drill mode the API serves reads and refuses writes, `/play/` and sign-in with 503 `openre.drill_read_only`. The coordinator and every worker exit before they open the database. The event relay and Media calls are off (`test/drill-mode.test.js`). Never set `OPENRE_DRILL` in `/etc/openvibe/openre.env`; the preflight's `env` check fails if it is set.
 - First install: create the `openre` OAuth client and grants in Network, `/etc/openvibe/openre.env` (0600), the certificate for `openre.stream`, DNS for `openre.stream` (proxied) and `ingest.openre.stream` (DNS only), firewall 1936/tcp, then `release`, `api`, `workers`, and `systemctl enable --now openre-api openre-session-coordinator`.
 
 ## Live integration (patch)
@@ -177,7 +179,7 @@ Not in the patch (follow-ups): live thumbnails, AI audio/vision taps and the Rob
 
 ## Migration
 
-`node scripts/migrate-from-live.js --live-db <snapshot> [--apply] [--slots 12,31] [--checklist out.md]` reads a **read-only snapshot** of Live's database (`sqlite3 …/live.db ".backup /tmp/live-snapshot.db"`), imports `managed_streams` as stream definitions (owner = `linked_accounts.subject_id`, recording mode/visibility from the slot and channel, refs `live:managed_stream` + `live:user`, `mirror_to_live` on) and their `restream_destinations` (keys sealed), and prints a per-channel cutover checklist. **No old key is imported**: each imported slot gets a new key nobody has seen; the broadcaster rotates to get one. Every source row is recorded in `migration_map` as imported, held (no subject yet; a private-host URL — kept disabled with the key sealed; unbound destination of a multi-slot user) or excluded (banned account), with the reason. Dry run by default; idempotent (`test/migration.test.js`).
+`node scripts/migrate-from-live.js --live-db <snapshot> [--apply] [--slots 12,31] [--checklist out.md]` reads a **read-only snapshot** of Live's database (production: `/opt/openvibe.live/data/live.db`; the snapshot commands are in [docs/cutover.md](docs/cutover.md) B2), imports `managed_streams` as stream definitions (owner = `linked_accounts.subject_id`, recording mode/visibility from the slot and channel, refs `live:managed_stream` + `live:user`, `mirror_to_live` on) and their `restream_destinations` (keys sealed), and prints a per-channel cutover checklist. **No old key is imported**: each imported slot gets a new key nobody has seen; the broadcaster rotates to get one. Every source row is recorded in `migration_map` as imported, held (no subject yet; a private-host URL — kept disabled with the key sealed; unbound destination of a multi-slot user) or excluded (banned account), with the reason. Dry run by default; idempotent (`test/migration.test.js`).
 
 ## Cutover runbook
 
@@ -185,24 +187,24 @@ ADR-009: one protocol at a time (RTMP → WHIP → JSMPEG → SFU), per slot, be
 
 ### RTMP (ready)
 
-Once, before the first slot (status 2026-09-23: steps 1 and 2 are done, the Live patch of step 4 is deployed with the switch off; step 3, the `OPENRE_*` settings of step 4, and a rehearsal through a public 1936/tcp are not done — 1936/tcp has to be opened at the host firewall and provider edge first, then `OPENRE_RTMP_BIND` set to a public address):
+**[docs/cutover.md](docs/cutover.md) is the runbook.** It gives the exact commands, who does each step,
+the checks and the rollback for every step. In short:
 
-1. Network: OAuth client `openre` + the grants listed under "Auth". Contracts: release the proposals.
-2. Host: deploy OpenRe (see "Deploying"), `curl 127.0.0.1:4500/api/ready` shows `ready`, one `rtmp-ingest` and one `restream` worker `ready`, the coordinator lease valid.
-3. Events: subscription `openre.session.*` → `http://127.0.0.1:3000/internal/openre-events`; put its secret in Live as `OPENRE_EVENTS_SECRET`.
-4. Live: apply `docs/live-patch.diff`, set `OPENRE_URL=http://127.0.0.1:4500`, deploy Live (`deploy.sh --wait-idle`). With no slot switched this changes nothing.
-5. Rehearse with a test account: a slot, `migrate-from-live.js --apply --slots <id>`, switch, regenerate, stream from OBS to `rtmp://ingest.openre.stream:1936/live`: the channel page shows the stream, restreams go live, a VOD appears; deploy Live and `deploy.sh api` during the broadcast — nothing drops; `deploy.sh workers` — the session stays on the old generation, a new publish lands on the new one.
+- **Once:** push, deploy the newest release (`deploy.sh release` and `api`), then set
+  `OPENRE_RTMP_BIND=0.0.0.0` and start the worker generation (`deploy.sh workers`). The **owner**
+  opens 1936/tcp at the provider edge. Set `OPENRE_URL`, `OPENRE_PUBLIC_URL` and
+  `OPENRE_EVENTS_SECRET` in Live, run `scripts/subscribe-live-events.js`, and restart Live. Then
+  rehearse with a test slot and a real destination.
+- **Per slot:** the broadcaster's window, a Live snapshot, `migrate-from-live.js --apply --slots <id>`,
+  `PUT /api/admin/openre/managed/<id>/ingest-authority` (owner, admin session), and Regenerate in
+  OBS. The broadcaster also rotates their personal key (hazard H4).
+- **Rollback:** per slot, `{"authority":"live"}` plus `scripts/set-definition-state.js --state disabled`.
+  For every slot at once, unset `OPENRE_URL` in Live and restart it.
 
-Per channel (the checklist printed by the migration script, per slot):
-
-1. Maintenance window agreed with the broadcaster; the slot is offline.
-2. `migrate-from-live.js --live-db <fresh snapshot> --apply --slots <id>`; review destinations on openre.stream (held ones need the owner).
-3. `PUT /api/admin/openre/managed/<id>/ingest-authority {"authority":"openre"}` — Live refuses the old key from now on and has rotated its own copy.
-4. The broadcaster presses **Regenerate stream key** on the Go Live page (OpenRe issues the key, shown once) and pastes server `rtmp://ingest.openre.stream:1936/live` and the key into OBS.
-5. Rotate the broadcaster's personal Live key too (`users.stream_key`; not migrated).
-6. Test broadcast; watch `deploy.sh status`, `/api/admin/openre/status` on Live, the output health on openre.stream.
-
-Rollback (per slot): `{"authority":"live"}` — the broadcaster regenerates the key on Live and points OBS back at the Live RTMP URL shown on the Go Live page. All slots at once: unset `OPENRE_URL` in Live and restart it (waiting for idle).
+`scripts/cutover-preflight.js` checks, read-only, what each step needs: the release, the service,
+the env, the bind, DNS, the port from outside, the database, Live's env, the Events subscription and
+one slot. Status on 2026-09-23: OpenRe is deployed (`655b98a10aaa`) and DNS is done. The release with
+`6dc78a5`, the public bind, the provider port, Live's settings and the subscription are not.
 
 ### WHIP, JSMPEG, SFU (not ready)
 
