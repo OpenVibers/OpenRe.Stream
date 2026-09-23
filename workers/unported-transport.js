@@ -36,9 +36,11 @@ function createUnportedTransport({ rt, kind, log = console, exit = (code) => pro
 
 function main(kind) {
     require('dotenv').config({ path: process.env.OPENRE_ENV_FILE || path.join(process.cwd(), '.env') });
-    const { load } = require('../server/config');
+    const { load, exitIfDrill } = require('../server/config');
     const { openRuntime } = require('../server/store');
-    const w = createUnportedTransport({ rt: openRuntime({ config: load() }), kind });
+    const config = load();
+    exitIfDrill(config, `openre-${kind}`);
+    const w = createUnportedTransport({ rt: openRuntime({ config }), kind });
     w.start();
     for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => w.drain(sig));
 }

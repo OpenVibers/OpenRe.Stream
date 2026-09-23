@@ -10,11 +10,12 @@ const path = require('path');
 
 if (require.main === module) {
     require('dotenv').config({ path: process.env.OPENRE_ENV_FILE || path.join(process.cwd(), '.env') });
-    const { load } = require('../server/config');
+    const { load, exitIfDrill } = require('../server/config');
     const { openRuntime } = require('../server/store');
     const { createCoordinator } = require('../server/coordinator');
     const { createMediaClient } = require('../server/media-client');
     const config = load();
+    exitIfDrill(config, 'openre-session-coordinator');
     const rt = openRuntime({ config });
     const media = createMediaClient({ config });
     const coordinator = createCoordinator({ rt, media });

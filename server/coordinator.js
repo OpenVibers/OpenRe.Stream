@@ -17,9 +17,11 @@
  * The event relay (outbox → OpenVibe.Events) runs in this process too.
  */
 const { KINDS } = require('./store/workers');
+const { assertNotDrill } = require('./config');
 
 function createCoordinator({ rt, media, log = console, holder = `coordinator:${process.pid}` }) {
     const { db, store, config, clock } = rt;
+    assertNotDrill(config, 'The session coordinator');
     const now = () => clock.now();
     const lease = {
         take: db.prepare(`INSERT INTO leases (name, holder, expires_at) VALUES ('coordinator', @holder, @exp)

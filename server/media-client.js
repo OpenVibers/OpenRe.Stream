@@ -28,7 +28,8 @@ function createMediaClient({ config, fetchImpl = globalThis.fetch }) {
         ? createServiceTokenClient({ tokenUrl: `${config.networkInternalUrl}/oauth/token`, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret, audience: 'openvibe.media', fetch: fetchImpl })
         : null;
 
-    const configured = config.media.enabled && Boolean(config.media.auth === 'service' ? tokens : config.media.apiKey);
+    // A restore drill (OPENRE_DRILL) never asks Media for anything.
+    const configured = config.media.enabled && !config.drill && Boolean(config.media.auth === 'service' ? tokens : config.media.apiKey);
 
     async function authHeader() {
         if (tokens) return { Authorization: `Bearer ${await tokens.getToken()}` };

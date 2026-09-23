@@ -18,6 +18,8 @@
  * The heartbeat (every heartbeatMs) is also the lease renewal for every session the worker owns.
  * A worker never depends on openre-api being up; it needs only the database.
  */
+const { assertNotDrill } = require('../server/config');
+
 /** Run a cleanup hook, but never let it keep the process from exiting (5 s at most). */
 function settle(fn) {
     return Promise.race([
@@ -28,6 +30,7 @@ function settle(fn) {
 
 function createWorkerRuntime({ rt, kind, log = console, hooks = {}, exit = (code) => process.exit(code) }) {
     const { store, config } = rt;
+    assertNotDrill(config, `The ${kind} worker`);
     let me = null;
     let timer = null;
     let draining = false;

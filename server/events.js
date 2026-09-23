@@ -36,7 +36,8 @@ const TYPES = Object.freeze({
  * enqueue(envelope) must run inside the transaction that makes the change.
  */
 function createEvents({ config, db, fetchImpl = globalThis.fetch, now = () => Date.now(), log = console }) {
-    const configured = Boolean(config.events.url && config.oauth.clientSecret && config.events.publish);
+    // A restore drill (OPENRE_DRILL) never publishes: its outbox rows describe a restored copy.
+    const configured = Boolean(config.events.url && config.oauth.clientSecret && config.events.publish && !config.drill);
     let tokenProvider = null;
     if (configured) {
         tokenProvider = createServiceTokenClient({

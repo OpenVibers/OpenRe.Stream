@@ -261,9 +261,11 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
 
 if (require.main === module) {
     require('dotenv').config({ path: process.env.OPENRE_ENV_FILE || path.join(process.cwd(), '.env') });
-    const { load } = require('../server/config');
+    const { load, exitIfDrill } = require('../server/config');
     const { openRuntime } = require('../server/store');
-    const rt = openRuntime({ config: load() });
+    const config = load();
+    exitIfDrill(config, 'openre-rtmp-ingest');
+    const rt = openRuntime({ config });
     const worker = createRtmpIngest({ rt });
     let started = false;
     worker.start().then(() => { started = true; }, (err) => { console.error(`[rtmp] failed to start: ${err.stack || err}`); process.exit(1); });

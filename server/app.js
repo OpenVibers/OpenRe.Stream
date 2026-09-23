@@ -24,6 +24,18 @@ function createApp({ rt, auth, keys, log = console, fetchImpl }) {
     });
     app.use(cookieParser());
 
+    // Restore drill (OPENRE_DRILL, ovhost drill): serve reads from the restored copy and nothing
+    // else. No writes (they would only change the copy, but a drill must not look like it works),
+    // no /play/ (it would pull from production's worker on loopback), no sign-in (it would redeem
+    // codes at Network).
+    if (config.drill) {
+        app.use((req, res, next) => {
+            const read = req.method === 'GET' || req.method === 'HEAD';
+            if (read && !req.path.startsWith('/play/') && !req.path.startsWith('/auth/')) return next();
+            return contracts.http.sendProblem(res, 503, 'openre.drill_read_only', { detail: 'this is a restore-drill instance (OPENRE_DRILL): reads only', ctx: req.ov });
+        });
+    }
+
     app.get('/api/health', (_req, res) => res.json({ status: 'ok', service: 'openre-api', version: pkg.version, release: config.release }));
 
     // Ready = the database answers and the Network key is loaded. Worker and coordinator state is
@@ -42,6 +54,7 @@ function createApp({ rt, auth, keys, log = console, fetchImpl }) {
         } catch { /* reported as empty */ }
         res.status(ready ? 200 : 503).json({
             status: ready ? 'ready' : 'not_ready',
+            ...(config.drill ? { mode: 'drill' } : {}),
             checks,
             store: { engine: 'sqlite', path_configured: Boolean(config.dbPath) },
             workers,

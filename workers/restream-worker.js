@@ -110,9 +110,11 @@ function createRestreamWorker({ rt, log = console, exit = (code) => process.exit
 
 if (require.main === module) {
     require('dotenv').config({ path: process.env.OPENRE_ENV_FILE || path.join(process.cwd(), '.env') });
-    const { load } = require('../server/config');
+    const { load, exitIfDrill } = require('../server/config');
     const { openRuntime } = require('../server/store');
-    const rt = openRuntime({ config: load() });
+    const config = load();
+    exitIfDrill(config, 'openre-restream-worker');
+    const rt = openRuntime({ config });
     const worker = createRestreamWorker({ rt });
     worker.start();
     // If this process dies, its ffmpeg children must not keep pushing unsupervised: the outputs are

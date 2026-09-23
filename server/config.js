@@ -31,6 +31,11 @@ function load(env = process.env) {
         baseUrl: trim(env.BASE_URL || (isProduction ? 'https://openre.stream' : `http://localhost:${port}`)),
         // A release label for logs and worker generations (deploy.sh sets the git sha).
         release: env.OPENRE_RELEASE || 'dev',
+        // Restore-drill mode (ovhost drill): the process serves reads from a restored copy of the
+        // database and nothing else. The coordinator and every transport worker refuse to start, the
+        // event relay and Media recording requests are off, the API refuses writes and /play/.
+        // Never set in /etc/openvibe/openre.env (scripts/cutover-preflight.js checks that).
+        drill: bool(env.OPENRE_DRILL, false),
 
         // ── Identity: OpenVibe.Network ──────────────────────────
         networkUrl: trim(env.OV_NETWORK_URL || 'https://openvibe.network'),
@@ -146,4 +151,24 @@ function load(env = process.env) {
     };
 }
 
-module.exports = { load };
+/**
+ * Processes that lease sessions, run transports or call other services refuse to start in a
+ * restore drill (OPENRE_DRILL): the coordinator and every transport worker. Throws with code
+ * OPENRE_DRILL; entry points print the message and exit before opening the database.
+ */
+function assertNotDrill(config, what) {
+    if (!config || !config.drill) return;
+    const err = new Error(`${what} does not run in a restore drill (OPENRE_DRILL is set): it would lease sessions, run transports or call other services. Only openre-api runs in a drill.`);
+    err.code = 'OPENRE_DRILL';
+    throw err;
+}
+
+/** Entry points: print why and exit before the database is opened. */
+function exitIfDrill(config, what) {
+    try { assertNotDrill(config, what); } catch (err) {
+        console.error(`[${what}] ${err.message}`);
+        process.exit(1);
+    }
+}
+
+module.exports = { load, assertNotDrill, exitIfDrill };
