@@ -1,0 +1,11 @@
+# gitleaks configuration, used by the shared security workflow
+# (OpenVibers/OpenVibe.Shared/.github/workflows/security.yml). The default rules stay on; every
+# allowlist below is one proven false positive, matched on path AND value so nothing else is hidden.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Made-up destination stream keys in tests that prove keys are write-only and encrypted at rest"
+condition = "AND"
+paths = ['''^test/(destinations-ui|keys)\.test\.js$''']
+regexes = ['''^live_(abcdef_9876|1234567890_secret)$''']
