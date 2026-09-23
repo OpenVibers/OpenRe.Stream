@@ -2,7 +2,7 @@
 
 > Ingest and restream: stream definitions, keys, sessions, transport workers, outputs and output health.
 
-**Status:** alpha (roadmap Wave 7). Runs and is tested end to end with real RTMP; not deployed, and no broadcaster uses it yet. The domain keeps its placeholder page on OpenVibe.Sites until the launch rule below is met.
+**Status:** alpha (roadmap Wave 7). Tested end to end with real RTMP. Deployed internally on `openvibe-ovh` since 2026-09-23 (API on 127.0.0.1:4500, RTMP ingest bound to 127.0.0.1:1936, one rehearsal broadcast passed), but not launched: no broadcaster uses it (all 102 Live slots are still `ingest_authority=live`), and Live's side of the integration is deployed but inert until `OPENRE_*` is set in Live. The domain keeps its placeholder page on OpenVibe.Sites until the launch rule below is met.
 **Domain:** `openre.stream` (UI + API), `ingest.openre.stream` (RTMP, DNS only)
 **Plan:** OpenVibe End-to-End Realignment & Implementation Plan, revision 3 (20 Sep 2026), §10, §10.5, §15.10; ADR-009 (binding), ADR-004, ADR-006, ADR-007.
 **License:** AGPL-3.0 (same as every OpenVibe service).
@@ -93,7 +93,7 @@ Services call with an OpenVibe.Network client-credentials token (audience `openv
 | `openre.output.read` | `GET /api/v1/streams/:id/destinations`, `GET /api/v1/sessions/:id/outputs`, `GET /api/v1/destinations/:id/logs`, `GET /api/v1/outputs/:id/logs` |
 | `openre.output.write` | `POST /api/v1/streams/:id/destinations`, `PATCH`/`DELETE /api/v1/destinations/:id`, `POST /api/v1/destinations/:id/test|start|stop` |
 
-The ids are proposed in [docs/capabilities-proposal/](docs/capabilities-proposal/) with the service manifest ([docs/service-manifest-proposal.json](docs/service-manifest-proposal.json)); they are not in `openvibe-contracts` yet. Until that release, `server/auth/index.js` grants them with the contracts rule (exact id or `family.*`) and defers to `capabilities.check()` once contracts know the id. Errors are RFC 9457 problem+json with a stable `code`.
+The ids were proposed in [docs/capabilities-proposal/](docs/capabilities-proposal/) with the service manifest ([docs/service-manifest-proposal.json](docs/service-manifest-proposal.json)) and are registered in `openvibe-contracts` since v0.16.0 (the version this repository pins). `server/auth/index.js` grants them with the contracts rule (exact id or `family.*`) and defers to `capabilities.check()` for every id the installed contracts know. Errors are RFC 9457 problem+json with a stable `code`.
 
 **Grants the lead adds in Network** (`[client, capability, audience]`):
 
@@ -161,7 +161,7 @@ sudo deploy/scripts/deploy.sh status
 
 ## Live integration (patch)
 
-[docs/live-patch.diff](docs/live-patch.diff) is the Live side, made against OpenVibe.Live `f11f809` and verified there (applies with `git apply`; Live's `npm test` 63/63 on Node 22.22.1). **Switch off (the default) changes nothing**: with `OPENRE_URL` unset, or a slot on `'live'`, every changed code path returns what it returned before (`test/openre-switch.test.js` in the patch). The only observable difference is additive: owner responses built from `managed_streams` rows carry the two new columns (`ingest_authority: 'live'`, `openre_stream_id: null`). It adds:
+[docs/live-patch.diff](docs/live-patch.diff) is the Live side, made against OpenVibe.Live `f11f809` and verified there (applies with `git apply`; Live's `npm test` 63/63 on Node 22.22.1). It is applied in Live (`f0ca18b`) and deployed in production, switched off: `OPENRE_URL` is not set in Live's env. **Switch off (the default) changes nothing**: with `OPENRE_URL` unset, or a slot on `'live'`, every changed code path returns what it returned before (`test/openre-switch.test.js` in the patch). The only observable difference is additive: owner responses built from `managed_streams` rows carry the two new columns (`ingest_authority: 'live'`, `openre_stream_id: null`). It adds:
 
 - `server/openre/openre-client.js` — service-token client for OpenRe (streams by `external_ref`, create, rotate, sessions, playback descriptors).
 - `managed_streams.ingest_authority` (`'live'` default | `'openre'`) + `openre_stream_id`, and an `openre_sessions` projection table (additive, in `initDb`).
@@ -185,7 +185,7 @@ ADR-009: one protocol at a time (RTMP → WHIP → JSMPEG → SFU), per slot, be
 
 ### RTMP (ready)
 
-Once, before the first slot:
+Once, before the first slot (status 2026-09-23: steps 1 and 2 are done, the Live patch of step 4 is deployed with the switch off; step 3, the `OPENRE_*` settings of step 4, and a rehearsal through a public 1936/tcp are not done — 1936/tcp has to be opened at the host firewall and provider edge first, then `OPENRE_RTMP_BIND` set to a public address):
 
 1. Network: OAuth client `openre` + the grants listed under "Auth". Contracts: release the proposals.
 2. Host: deploy OpenRe (see "Deploying"), `curl 127.0.0.1:4500/api/ready` shows `ready`, one `rtmp-ingest` and one `restream` worker `ready`, the coordinator lease valid.
@@ -218,7 +218,7 @@ Each needs its transport ported into its worker (`workers/webrtc-ingest.js`, `wo
 | A destination failure never terminates the source session | `test/rtmp-e2e.test.js` (dead destination fails, session and encoder stay), `test/sessions.test.js`, `test/coordinator.test.js` (lost restream worker) |
 | Recording finalisation stays in Media | `test/recording-events.test.js`, `test/rtmp-e2e.test.js` (Media is asked to create/ingest/finalise; Media's ffmpeg pulls the loopback URL) |
 | Every stream key that existed before is rotated | `test/migration.test.js` (old keys never imported; new keys unseen), Live patch rotates Live's own slot key at the switch; checklist step for personal keys |
-| Deploying Live during a broadcast does not interrupt transport or recording | by construction (no OpenRe process talks to Live); proven for real only after the Live patch is deployed — not claimed here |
+| Deploying Live during a broadcast does not interrupt transport or recording | by construction (no OpenRe process talks to Live); proven for real only once a slot runs on OpenRe — not claimed here (every Live restart still stops Live's own restreams) |
 | Switch off = no Live behaviour change | Live's full `npm test` with the patch applied, plus `test/openre-switch.test.js` |
 
 ## Launch rule
@@ -230,8 +230,10 @@ observability; canonical identity/auth integration; server-rendered public route
 JavaScript; real persistence and end-to-end workflows; capability and event registration against
 `OpenVibe.Contracts`; a migration/seed strategy, a security/threat review, and
 sitemap/robots/feed behaviour; acceptance tests proving the advertised functionality. Today the
-first three and the last are in place; capability registration, a security review and the
-production deploy are not.
+runtime, identity integration, server-rendered routes, persistence, capability registration (contracts v0.16.0),
+the migration strategy and the acceptance tests are in place, and the service is deployed
+internally (loopback only). An independent security review, a public ingest port and the first
+slot cutover are not.
 
 ---
 
