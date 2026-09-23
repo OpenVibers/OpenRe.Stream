@@ -130,7 +130,7 @@ pf --only service,env,bind        # ready generation on $SHA; 0.0.0.0:1936 liste
   Remove the rule with the same line using `-D` instead of `-I`. Never enable ufw for this: it has
   no rule for SSH on this host.
 
-### A4. Open 1936/tcp at the provider edge (OWNER)
+### A4. Open 1936/tcp at the provider edge (OWNER) — not needed: 2026-09-23 19:24 UTC the off-host check passed as soon as the public bind was up
 
 Open **1936/tcp inbound** to `15.204.79.215` in the provider's network firewall, the same place that
 already allows 1935. The host firewall (ufw) is inactive and needs nothing. The DNS record
