@@ -262,7 +262,12 @@ t('events reached OpenVibe.Events through the outbox relay, without keys', async
 t('no OpenRe process crashed along the way', () => {
     assert.strictEqual(coordinator.exitCode, null, `coordinator exited:\n${coordinator.output}`);
     assert.strictEqual(api.exitCode, null, `api exited:\n${api.output}`);
-    assert.strictEqual(ingest2.exitCode, null, `generation 2 exited:\n${ingest2.output}`);
+    assert.strictEqual(ingest2.exitCode, null, `generation 2 exited:\n${ingest2.output}`);    // No ingest or destination key in any OpenRe process log.
+    for (const p of procs) {
+        if (!p.output) continue;
+        assert.ok(!p.output.includes(keyA), 'no ingest key in logs');
+        assert.ok(!p.output.includes('sinkkey') && !p.output.includes('deadkey'), 'no destination key in logs');
+    }
 });
 
 t('teardown', async () => {
