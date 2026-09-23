@@ -17,9 +17,4 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm test
       - name: contract check (openvibe-contracts)
-        # openre's service manifest in openvibe-contracts is still the charter placeholder
-        # (contractRanges ^0.1.0, no capabilities) until the lead releases
-        # docs/service-manifest-proposal.json and docs/capabilities-proposal/. Remove
-        # continue-on-error in the commit that bumps openvibe-contracts to that release.
-        continue-on-error: true
         run: npx openvibe-contracts-check --service openre --src server --src workers
