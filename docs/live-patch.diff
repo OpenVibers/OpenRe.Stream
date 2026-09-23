@@ -273,10 +273,10 @@ index 0000000..865fff1
 +module.exports = { OPENRE_PROTOCOLS, authorityOf, slotById, slotIsOpenre, refusesLiveIngest, serializeSlot, ingestFor, rotateFor, setAuthority };
 diff --git a/server/openre/mirror.js b/server/openre/mirror.js
 new file mode 100644
-index 0000000..365f61d
+index 0000000..3f739cc
 --- /dev/null
 +++ b/server/openre/mirror.js
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,206 @@
 +'use strict';
 +/**
 + * OpenRe sessions → Live's `streams` table (roadmap Wave 7, ADR-009: Live observes sessions through
@@ -331,6 +331,7 @@ index 0000000..365f61d
 +    const p = event.payload || {};
 +    const sessionId = String(p.session_id || (event.subject && event.subject.id) || '');
 +    const revision = Number(event.subject && event.subject.revision) || 0;
++    if (event.source !== 'openre') return { outcome: 'ignored' };
 +    if (!/^openre\.session\.(started|ended|failed)$/.test(type) || !/^ses_[0-9A-HJKMNP-TV-Z]{26}$/.test(sessionId)) return { outcome: 'ignored' };
 +    const known = db.get('SELECT * FROM openre_sessions WHERE session_id = ?', [sessionId]);
 +    if (known && known.revision >= revision) return { outcome: 'stale' };
@@ -463,7 +464,7 @@ index 0000000..365f61d
 +            db.run("UPDATE openre_sessions SET confirmed_at = CURRENT_TIMESTAMP WHERE session_id = ?", [r.session_id]);
 +            if (r.stream_id) db.run('UPDATE streams SET last_heartbeat = CURRENT_TIMESTAMP WHERE id = ? AND is_live = 1', [r.stream_id]);
 +        } else if (['ending', 'ended', 'failed'].includes(s.state)) {
-+            const event = { event_type: `openre.session.${s.state === 'failed' ? 'failed' : 'ended'}`, subject: { type: 'ingest_session', id: r.session_id, revision: Math.max(Number(s.revision) || 0, r.revision + 1) }, payload: { session_id: r.session_id, ended_at: s.ended_at } };
++            const event = { source: 'openre', event_type: `openre.session.${s.state === 'failed' ? 'failed' : 'ended'}`, subject: { type: 'ingest_session', id: r.session_id, revision: Math.max(Number(s.revision) || 0, r.revision + 1) }, payload: { session_id: r.session_id, ended_at: s.ended_at } };
 +            const out = db.getDb().transaction(() => apply(event))();
 +            if (out.after) out.after();
 +            n++;
@@ -790,7 +791,7 @@ index 4b5f8e4..4ac081b 100644
          const liveStreams = getLiveStreamsForDestination(dest, req.user.id);
          for (const stream of liveStreams) {
 diff --git a/server/streaming/routes.js b/server/streaming/routes.js
-index 70a0857..105be81 100644
+index 70a0857..2c5d856 100644
 --- a/server/streaming/routes.js
 +++ b/server/streaming/routes.js
 @@ -28,6 +28,8 @@ const { requireAuth, requireStreamer, optionalAuth } = require('../auth/auth');
@@ -913,7 +914,7 @@ index 70a0857..105be81 100644
          const rtmpKey = stream.managed_stream_key || db.getUserById(stream.user_id)?.stream_key;
          const rtmpServer = require('./rtmp-server');
          const status = rtmpServer.getStatus(rtmpKey);
-@@ -2402,17 +2440,27 @@ router.get('/:id/call', optionalAuth, (req, res) => {
+@@ -2402,18 +2440,29 @@ router.get('/:id/call', optionalAuth, (req, res) => {
  // ── RTMP FLV Proxy ───────────────────────────────────────────
  // Proxies HTTP-FLV from the internal NMS server so the browser fetches
  // from the same HTTPS origin, avoiding CSP / mixed-content issues.
@@ -945,8 +946,10 @@ index 70a0857..105be81 100644
 +            url = `http://127.0.0.1:${nmsPort}/live/${flvKey}.flv`;
 +        }
  
++        if (req.destroyed) return undefined; // the viewer left while OpenRe was asked
          const http = require('http');
          const upstream = http.get(url, (nmsRes) => {
+             if (nmsRes.statusCode !== 200) {
 diff --git a/server/streaming/rtmp-server.js b/server/streaming/rtmp-server.js
 index fb8ba5c..709da89 100644
 --- a/server/streaming/rtmp-server.js

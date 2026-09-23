@@ -253,7 +253,15 @@ if (require.main === module) {
     const { openRuntime } = require('../server/store');
     const rt = openRuntime({ config: load() });
     const worker = createRtmpIngest({ rt });
-    worker.start().catch((err) => { console.error(`[rtmp] failed to start: ${err.stack || err}`); process.exit(1); });
+    let started = false;
+    worker.start().then(() => { started = true; }, (err) => { console.error(`[rtmp] failed to start: ${err.stack || err}`); process.exit(1); });
+    // node-media-server's own server logs an uncaught exception and keeps going (NodeMediaServer.run
+    // registers exactly that). A malformed packet from one encoder must not take every other
+    // publisher on this worker down with it, so the worker keeps that behaviour once it is up.
+    process.on('uncaughtException', (err) => {
+        console.error(`[rtmp] uncaught exception (worker keeps running): ${err && err.stack || err}`);
+        if (!started) process.exit(1);
+    });
     for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => worker.drain(sig));
 }
 

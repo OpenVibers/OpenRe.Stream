@@ -33,6 +33,7 @@ function createOutputs({ db, config, events, clock, box, definitions, sessions }
             WHERE o.desired = 'run' AND o.state = 'pending' AND o.worker_id IS NULL AND s.state = 'live' ORDER BY o.created_at`),
         assign: db.prepare("UPDATE outputs SET worker_id = ?, worker_generation = ?, updated_at = ? WHERE id = ? AND worker_id IS NULL AND state = 'pending'"),
         forWorker: db.prepare(`SELECT * FROM outputs WHERE worker_id = ? AND state IN ${OPEN}`),
+        unassign: db.prepare("UPDATE outputs SET worker_id = NULL, worker_generation = NULL, updated_at = ? WHERE id = ? AND state = 'pending'"),
         release: db.prepare(`UPDATE outputs SET worker_id = NULL, worker_generation = NULL, state = 'pending', updated_at = ?
             WHERE worker_id = ? AND state IN ${OPEN} AND desired = 'run'`),
         stopOrphans: db.prepare(`UPDATE outputs SET state = 'stopped', ended_at = ?, updated_at = ?
@@ -339,6 +340,7 @@ function createOutputs({ db, config, events, clock, box, definitions, sessions }
         assignPending,
         forWorker: (workerId) => q.forWorker.all(workerId),
         release: (workerId) => q.release.run(now(), workerId).changes,
+        unassign: (outputId) => q.unassign.run(now(), outputId).changes,
         stopOrphans: () => q.stopOrphans.run(now(), now()).changes,
         report,
         log,

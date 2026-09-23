@@ -27,7 +27,7 @@ function createRestreamWorker({ rt, log = console, exit = (code) => process.exit
             onDrainDeadline: () => handOver(),
             onLost: () => stopAll('worker lost'),
             activeCount: () => runners.size,
-            onExit: () => { closing = true; clearTimeout(pollTimer); },
+            onExit: () => { closing = true; clearTimeout(pollTimer); if (runtime.me) store.outputs.release(runtime.me.id); },
         },
     });
 
@@ -52,7 +52,9 @@ function createRestreamWorker({ rt, log = console, exit = (code) => process.exit
             }
             if (runner && runner.stopped) { runners.delete(row.id); runner = null; continue; }
             if (runner) continue;
-            if (runtime.draining) continue; // a draining generation starts nothing new
+            // A draining generation starts nothing new: an output assigned to it but not started yet
+            // goes back to the coordinator for the newest generation.
+            if (runtime.draining) { store.outputs.unassign(row.id); seen.delete(row.id); continue; }
             const input = inputUrlFor(session);
             if (!input) { store.outputs.report(row.id, { state: 'failed', last_error: `restream from ${session.protocol} sessions is not supported by OpenRe yet`, ended_at: Date.now() }); continue; }
             // Let the ingest settle before pulling (Live waits 3 s for node-media-server's FLV).
@@ -113,6 +115,11 @@ if (require.main === module) {
     const rt = openRuntime({ config: load() });
     const worker = createRestreamWorker({ rt });
     worker.start();
+    // If this process dies, its ffmpeg children must not keep pushing unsupervised: the outputs are
+    // reassigned to another worker, and two pushes to one ingest make platforms drop both.
+    process.on('exit', () => {
+        for (const r of worker.runners().values()) { try { if (r.proc) r.proc.kill('SIGKILL'); } catch { /* */ } }
+    });
     for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => worker.drain(sig));
 }
 
