@@ -93,7 +93,7 @@ Services call with an OpenVibe.Network client-credentials token (audience `openv
 | `openre.output.read` | `GET /api/v1/streams/:id/destinations`, `GET /api/v1/sessions/:id/outputs`, `GET /api/v1/destinations/:id/logs`, `GET /api/v1/outputs/:id/logs` |
 | `openre.output.write` | `POST /api/v1/streams/:id/destinations`, `PATCH`/`DELETE /api/v1/destinations/:id`, `POST /api/v1/destinations/:id/test|start|stop` |
 
-The ids were proposed in [docs/capabilities-proposal/](docs/capabilities-proposal/) with the service manifest ([docs/service-manifest-proposal.json](docs/service-manifest-proposal.json)) and are registered in `openvibe-contracts` since v0.16.0 (the version this repository pins). `server/auth/index.js` grants them with the contracts rule (exact id or `family.*`) and defers to `capabilities.check()` for every id the installed contracts know. Errors are RFC 9457 problem+json with a stable `code`.
+The ids were proposed in [docs/capabilities-proposal/](docs/capabilities-proposal/) with the service manifest ([docs/service-manifest-proposal.json](docs/service-manifest-proposal.json)) and are registered in `openvibe-contracts` since v0.16.0 (this repository pins v0.32.0). `server/auth/index.js` grants them with the contracts rule (exact id or `family.*`) and defers to `capabilities.check()` for every id the installed contracts know. Errors are RFC 9457 problem+json with a stable `code`.
 
 **Grants the lead adds in Network** (`[client, capability, audience]`):
 
