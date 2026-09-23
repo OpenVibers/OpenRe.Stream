@@ -37,6 +37,8 @@ CREATE TABLE IF NOT EXISTS stream_definitions (
 CREATE INDEX IF NOT EXISTS idx_definitions_owner ON stream_definitions(owner_subject, state);
 
 -- Typed references to other services' entities (plan §29.3): never a foreign key into them.
+-- A reference to a stream-like entity (e.g. live:managed_stream) belongs to one definition; owner
+-- references (live:user, live:channel) may repeat across a person's definitions.
 CREATE TABLE IF NOT EXISTS external_refs (
     definition_id TEXT NOT NULL REFERENCES stream_definitions(id) ON DELETE CASCADE,
     service       TEXT NOT NULL,
@@ -44,9 +46,9 @@ CREATE TABLE IF NOT EXISTS external_refs (
     ref_id        TEXT NOT NULL,
     label         TEXT,
     created_at    INTEGER NOT NULL,
-    PRIMARY KEY (service, type, ref_id)
+    PRIMARY KEY (definition_id, service, type, ref_id)
 );
-CREATE INDEX IF NOT EXISTS idx_external_refs_definition ON external_refs(definition_id);
+CREATE INDEX IF NOT EXISTS idx_external_refs_ref ON external_refs(service, type, ref_id);
 
 -- Ingest keys are stored as SHA-256 of a 256-bit random secret; the secret is shown once.
 CREATE TABLE IF NOT EXISTS ingest_keys (

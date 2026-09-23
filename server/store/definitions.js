@@ -16,6 +16,8 @@ const RECORDING_MODES = Object.freeze(['vod', 'clips', 'none']);
 const VISIBILITIES = Object.freeze(['public', 'unlisted', 'private']);
 const REF_SERVICE_RE = /^[a-z][a-z0-9-]{1,39}$/;
 const REF_TYPE_RE = /^[a-z][a-z0-9_]{1,39}$/;
+// Owner-level reference types may be shared by several definitions of the same person.
+const SHARED_REF_TYPES = new Set(['user', 'channel']);
 
 class StoreError extends Error {
     constructor(status, code, detail) { super(detail); this.status = status; this.code = code; }
@@ -56,7 +58,8 @@ function createDefinitions({ db, config, events, clock }) {
         get: db.prepare('SELECT * FROM stream_definitions WHERE id = ?'),
         refs: db.prepare('SELECT service, type, ref_id AS id, label FROM external_refs WHERE definition_id = ? ORDER BY created_at, service, type'),
         insertRef: db.prepare('INSERT INTO external_refs (definition_id, service, type, ref_id, label, created_at) VALUES (?, ?, ?, ?, ?, ?)'),
-        byRef: db.prepare('SELECT definition_id FROM external_refs WHERE service = ? AND type = ? AND ref_id = ?'),
+        byRef: db.prepare(`SELECT r.definition_id FROM external_refs r JOIN stream_definitions d ON d.id = r.definition_id
+            WHERE r.service = ? AND r.type = ? AND r.ref_id = ? ORDER BY (d.state = 'archived'), d.created_at LIMIT 1`),
         insertKey: db.prepare(`INSERT INTO ingest_keys (id, definition_id, key_hash, hint, status, created_by, created_at)
             VALUES (?, ?, ?, ?, 'active', ?, ?)`),
         activeKeys: db.prepare("SELECT * FROM ingest_keys WHERE definition_id = ? AND status = 'active'"),
@@ -141,7 +144,9 @@ function createDefinitions({ db, config, events, clock }) {
         const id = newId('stream', now());
         return db.transaction(() => {
             for (const r of refs) {
-                if (q.byRef.get(r.service, r.type, r.id)) throw new StoreError(409, 'openre.ref_taken', `${r.service}:${r.type}:${r.id} already belongs to another stream definition`);
+                if (SHARED_REF_TYPES.has(r.type)) continue;
+                const taken = q.byRef.get(r.service, r.type, r.id);
+                if (taken && row(taken.definition_id).state !== 'archived') throw new StoreError(409, 'openre.ref_taken', `${r.service}:${r.type}:${r.id} already belongs to another stream definition`);
             }
             q.insert.run({ id, owner_subject: input.owner_subject, description: '', ...fields, now: now() });
             for (const r of refs) q.insertRef.run(id, r.service, r.type, r.id, r.label, now());
