@@ -1,0 +1,21 @@
+{
+  "id": "openre.stream.write",
+  "version": "1.0",
+  "owner": "openre",
+  "status": "active",
+  "visibility": "first-party",
+  "description": "Create, update and archive stream definitions (creation issues the first ingest key, returned once). Archiving is refused while a session is open.",
+  "permissions": [
+    "openre:write"
+  ],
+  "resourceConstraints": [
+    "owner"
+  ],
+  "quotaClass": "openre-write",
+  "events": [],
+  "implementedBy": [
+    "POST /api/v1/streams",
+    "PATCH /api/v1/streams/:id",
+    "DELETE /api/v1/streams/:id"
+  ]
+}

@@ -62,7 +62,8 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
     };
     /** node-media-server session id → { sessionId, definitionId, endReason } */
     const publishers = new Map();
-    let publicServer = null;
+    let publicServers = [];
+    const publicPorts = new Set([config.rtmp.port, ...config.rtmp.extraPorts]);
     let playServer = null;
     let flvServer = null;
     let endpoints = null;
@@ -97,7 +98,7 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
     }
 
     function isPublicSocket(session) {
-        return Boolean(session && session.socket && session.socket.localPort === config.rtmp.port);
+        return Boolean(session && session.socket && publicPorts.has(session.socket.localPort));
     }
 
     on('prePublish', (id, streamPath) => {
@@ -178,10 +179,8 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
     }
 
     function closePublic() {
-        if (!publicServer) return;
-        const srv = publicServer;
-        publicServer = null;
-        srv.close();
+        if (!publicServers.length) return;
+        for (const srv of publicServers.splice(0)) srv.close();
         log.log('[rtmp] public listener closed; running publishers stay until they leave');
     }
 
@@ -221,17 +220,20 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
             return undefined;
         });
         const flvPort = await listenInRange(flvServer, config.rtmp.internalPortMin, config.rtmp.internalPortMax, new Set([rtmpPlayPort]));
-        endpoints = { publicPort: config.rtmp.port, rtmpPlayPort, flvPort };
+        endpoints = { publicPort: config.rtmp.port, publicPorts: [...publicPorts], rtmpPlayPort, flvPort };
         runtime.register(endpoints);
 
-        publicServer = newRtmpServer();
-        await new Promise((resolve, reject) => {
-            publicServer.once('error', reject);
-            publicServer.listen({ port: config.rtmp.port, host: config.rtmp.bindHost, reusePort: true }, () => resolve());
-        });
-        publicServer.on('error', (err) => log.error(`[rtmp] public listener: ${err.message}`));
+        for (const port of publicPorts) {
+            const srv = newRtmpServer();
+            await new Promise((resolve, reject) => {
+                srv.once('error', reject);
+                srv.listen({ port, host: config.rtmp.bindHost, reusePort: true }, () => resolve());
+            });
+            srv.on('error', (err) => log.error(`[rtmp] public listener ${port}: ${err.message}`));
+            publicServers.push(srv);
+        }
         runtime.ready();
-        log.log(`[rtmp] generation ${runtime.me.generation} ready: publish ${config.rtmp.bindHost}:${config.rtmp.port}, play 127.0.0.1:${rtmpPlayPort}, flv 127.0.0.1:${flvPort}`);
+        log.log(`[rtmp] generation ${runtime.me.generation} ready: publish ${config.rtmp.bindHost}:${[...publicPorts].join(',')}, play 127.0.0.1:${rtmpPlayPort}, flv 127.0.0.1:${flvPort}`);
         return endpoints;
     }
 

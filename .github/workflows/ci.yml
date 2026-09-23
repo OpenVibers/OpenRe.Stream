@@ -1,0 +1,25 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.1   # production runs Node 22 (>= 22.12 for SO_REUSEPORT)
+          cache: npm
+      # The RTMP end-to-end test publishes and restreams with a real ffmpeg.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - name: contract check (openvibe-contracts)
+        # openre's service manifest in openvibe-contracts is still the charter placeholder
+        # (contractRanges ^0.1.0, no capabilities) until the lead releases
+        # docs/service-manifest-proposal.json and docs/capabilities-proposal/. Remove
+        # continue-on-error in the commit that bumps openvibe-contracts to that release.
+        continue-on-error: true
+        run: npx openvibe-contracts-check --service openre --src server --src workers

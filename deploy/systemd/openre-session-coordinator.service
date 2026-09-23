@@ -1,0 +1,28 @@
+[Unit]
+Description=OpenRe.Stream session coordinator: worker leases and generations, output assignment, recording requests, event relay
+# Stateless between ticks (everything is in the database): restarting it never ends a session.
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/openre.stream/current
+EnvironmentFile=/etc/openvibe/openre.env
+Environment=NODE_ENV=production
+Environment=OPENRE_DB_PATH=/var/lib/openre/openre.db
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env node workers/coordinator.js
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=openre
+ReadWritePaths=/var/lib/openre
+
+[Install]
+WantedBy=multi-user.target

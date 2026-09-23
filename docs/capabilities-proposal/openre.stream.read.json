@@ -1,0 +1,21 @@
+{
+  "id": "openre.stream.read",
+  "version": "1.0",
+  "owner": "openre",
+  "status": "active",
+  "visibility": "first-party",
+  "description": "Read stream definitions: ingest URLs, key metadata (hint, status; never a key), settings and external references. Owners read their own; a service reads every stream, or the streams of the X-OV-Subject it acts for.",
+  "permissions": [
+    "openre:read"
+  ],
+  "resourceConstraints": [
+    "owner"
+  ],
+  "quotaClass": "openre-read",
+  "events": [],
+  "implementedBy": [
+    "GET /api/v1/streams",
+    "GET /api/v1/streams/:id",
+    "GET /api/v1/streams/:id/keys"
+  ]
+}

@@ -1,7 +1,24 @@
 {
   "repository": "OpenVibers/OpenRe.Stream",
-  "stage": "placeholder",
-  "code": false,
+  "stage": "alpha",
+  "code": true,
+  "wave": "W7",
   "plan": "OpenVibe End-to-End Realignment & Implementation Plan, revision 3 (20 Sep 2026)",
-  "updated": "2026-09-21"
+  "runtime": "node 22, express, better-sqlite3, node-media-server 2.7.4, ffmpeg",
+  "port": 4500,
+  "rtmpPort": 1936,
+  "domain": "openre.stream",
+  "contracts": "openvibe-contracts v0.13.0",
+  "protocols": {
+    "rtmp": "ingest ported (openre-rtmp-ingest)",
+    "restream": "RTMP source to RTMP/RTMPS/SRT destinations ported (openre-restream-worker)",
+    "whip": "not ported (worker interface only)",
+    "webrtc-sfu": "not ported (worker interface only)",
+    "jsmpeg": "not ported (worker interface only)"
+  },
+  "capabilities": ["openre.stream.read", "openre.stream.write", "openre.key.rotate", "openre.session.read", "openre.session.end", "openre.output.read", "openre.output.write"],
+  "capabilitiesRegistered": false,
+  "livePatch": "docs/live-patch.diff (not applied)",
+  "deployed": false,
+  "updated": "2026-09-22"
 }

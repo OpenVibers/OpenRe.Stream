@@ -1,0 +1,31 @@
+[Unit]
+Description=OpenRe.Stream API and UI (openre-api): definitions, keys, destinations, sessions, playback proxy
+# The API owns no transport. Restarting it (every API deploy) never touches the transport
+# workers: they are separate units with no dependency on this one, in either direction.
+After=network.target
+Wants=openvibe-network.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/openre.stream/current
+EnvironmentFile=/etc/openvibe/openre.env
+Environment=NODE_ENV=production
+Environment=PORT=4500
+Environment=OPENRE_DB_PATH=/var/lib/openre/openre.db
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env node server/index.js
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=openre
+ReadWritePaths=/var/lib/openre
+
+[Install]
+WantedBy=multi-user.target

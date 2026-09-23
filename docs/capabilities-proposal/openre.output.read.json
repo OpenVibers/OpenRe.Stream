@@ -1,0 +1,22 @@
+{
+  "id": "openre.output.read",
+  "version": "1.0",
+  "owner": "openre",
+  "status": "active",
+  "visibility": "first-party",
+  "description": "Read restream destinations (keys masked to their last four characters), outputs with health and progress, and bounded logs.",
+  "permissions": [
+    "openre:read"
+  ],
+  "resourceConstraints": [
+    "owner"
+  ],
+  "quotaClass": "openre-read",
+  "events": [],
+  "implementedBy": [
+    "GET /api/v1/streams/:id/destinations",
+    "GET /api/v1/sessions/:id/outputs",
+    "GET /api/v1/destinations/:id/logs",
+    "GET /api/v1/outputs/:id/logs"
+  ]
+}

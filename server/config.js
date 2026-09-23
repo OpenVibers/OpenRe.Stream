@@ -57,7 +57,8 @@ function load(env = process.env) {
         // ── Secrets ─────────────────────────────────────────────
         // 32-byte key (hex or base64) that encrypts destination stream keys and SRT passphrases
         // at rest (AES-256-GCM). OPENRE_SECRETS_KEY_PREVIOUS is tried for decryption only, so the
-        // key can be rotated (scripts/reencrypt is not needed: rows are re-encrypted on write).
+        // key can be rotated: old rows keep opening while it is set, and a destination is sealed
+        // with the current key whenever its stream key is saved again.
         secretsKey: env.OPENRE_SECRETS_KEY || '',
         secretsKeyPrevious: env.OPENRE_SECRETS_KEY_PREVIOUS || '',
 
@@ -66,6 +67,9 @@ function load(env = process.env) {
             // Public ingest port. Live's in-process ingest owns 1935 until the RTMP cutover
             // (README "Port plan"); OpenRe listens on 1936 until then.
             port: rtmpPort,
+            // Further public ports served by every worker, e.g. 1935 once Live's own RTMP ingest is
+            // retired (README "Port plan"): URLs handed out with :1936 keep working forever.
+            extraPorts: list(env.OPENRE_RTMP_EXTRA_PORTS, []).map(Number).filter(n => Number.isInteger(n) && n > 0 && n !== rtmpPort),
             bindHost: env.OPENRE_RTMP_BIND || '0.0.0.0',
             // What streamers paste into OBS: rtmp://<publicHost>[:port]/live
             publicHost: env.OPENRE_RTMP_PUBLIC_HOST || (isProduction ? 'ingest.openre.stream' : '127.0.0.1'),
@@ -111,7 +115,6 @@ function load(env = process.env) {
             liveAckTimeoutMs: int(env.OPENRE_LIVE_ACK_TIMEOUT_MS, 20000),
             stableMs: int(env.OPENRE_STABLE_MS, 30000),
             startDelayMs: int(env.OPENRE_OUTPUT_START_DELAY_MS, 3000),
-            cooldownMinutes: int(env.OPENRE_DEST_COOLDOWN_MINUTES, 30),
         },
 
         // ── Events (OpenVibe.Events through the SDK outbox) ─────

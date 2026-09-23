@@ -1,0 +1,37 @@
+[Unit]
+Description=OpenRe.Stream RTMP ingest worker, release %i
+# One instance per release (instance name = the release directory). A worker deploy STARTS a new
+# instance; the coordinator then drains the older generation, which closes its public listener,
+# keeps its publishers until they leave (or OPENRE_DRAIN_MAX_MS), and exits 0 by itself.
+# Nothing here depends on openre-api or openre-session-coordinator: an API deploy never restarts
+# this unit. Never `systemctl restart` it during a broadcast; see README "Deploying".
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/openre.stream/releases/%i
+EnvironmentFile=/etc/openvibe/openre.env
+Environment=NODE_ENV=production
+Environment=OPENRE_RELEASE=%i
+Environment=OPENRE_DB_PATH=/var/lib/openre/openre.db
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env node workers/rtmp-ingest.js
+# A crash restarts the instance as a new generation; a clean exit (drained) stays stopped.
+Restart=on-failure
+RestartSec=2
+# SIGTERM starts a drain; it does not drop publishers. Only the main process gets it.
+KillSignal=SIGTERM
+KillMode=mixed
+# An explicit stop (or host shutdown) waits this long for publishers to leave, then kills.
+TimeoutStopSec=30min
+LimitNOFILE=65536
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/openre
+
+[Install]
+WantedBy=multi-user.target

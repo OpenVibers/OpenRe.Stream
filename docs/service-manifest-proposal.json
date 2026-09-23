@@ -1,0 +1,40 @@
+{
+  "version": "0.1.0",
+  "contractRanges": {
+    "openvibe-contracts": ">=0.13.0 <1.0.0"
+  },
+  "id": "openre",
+  "name": "OpenRe.Stream",
+  "status": "alpha",
+  "repository": "OpenVibers/OpenRe.Stream",
+  "domains": [
+    "openre.stream",
+    "ingest.openre.stream"
+  ],
+  "publicOrigin": "https://openre.stream",
+  "health": "/api/health",
+  "ready": "/api/ready",
+  "capabilities": [
+    "openre.stream.read",
+    "openre.stream.write",
+    "openre.key.rotate",
+    "openre.session.read",
+    "openre.session.end",
+    "openre.output.read",
+    "openre.output.write"
+  ],
+  "eventsProduced": [
+    "openre.session.started",
+    "openre.session.ended",
+    "openre.session.failed",
+    "openre.output.healthy",
+    "openre.output.failed",
+    "openre.recording.requested",
+    "openre.key.rotated"
+  ],
+  "eventsConsumed": [],
+  "namespacesOwned": [
+    "openre.*"
+  ],
+  "notes": "Ingest and restream authority (ADR-009). Alpha: RTMP ingest and RTMP/SRT restream run in transport workers with generations and leases, separate from the API; WHIP, WebRTC/SFU and JSMPEG are still ingested by Live. Runs in parallel with Live; slots move one at a time behind Live's per-slot ingest_authority switch."
+}

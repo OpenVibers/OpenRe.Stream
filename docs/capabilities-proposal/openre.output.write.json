@@ -1,0 +1,27 @@
+{
+  "id": "openre.output.write",
+  "version": "1.0",
+  "owner": "openre",
+  "status": "active",
+  "visibility": "first-party",
+  "description": "Create, update, delete and test restream destinations (stream keys are write-only and sealed at rest; URLs must be rtmp/rtmps/srt with public hosts), and start or stop an output for the live session.",
+  "permissions": [
+    "openre:outputs"
+  ],
+  "resourceConstraints": [
+    "owner"
+  ],
+  "quotaClass": "openre-write",
+  "events": [
+    "openre.output.healthy",
+    "openre.output.failed"
+  ],
+  "implementedBy": [
+    "POST /api/v1/streams/:id/destinations",
+    "PATCH /api/v1/destinations/:id",
+    "DELETE /api/v1/destinations/:id",
+    "POST /api/v1/destinations/:id/test",
+    "POST /api/v1/destinations/:id/start",
+    "POST /api/v1/destinations/:id/stop"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "id": "openre.session.end",
+  "version": "1.0",
+  "owner": "openre",
+  "status": "active",
+  "visibility": "first-party",
+  "description": "Ask the worker that owns a session to disconnect its encoder (the session then ends normally).",
+  "permissions": [
+    "openre:sessions"
+  ],
+  "resourceConstraints": [
+    "owner"
+  ],
+  "quotaClass": "openre-write",
+  "events": [
+    "openre.session.ended"
+  ],
+  "implementedBy": [
+    "POST /api/v1/sessions/:id/end"
+  ]
+}
