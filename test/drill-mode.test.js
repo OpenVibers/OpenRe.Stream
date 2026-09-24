@@ -69,6 +69,8 @@ t('openre-api in a drill: reads work and match a normal instance; writes, /play/
     const rel = await request(normal.base, 'GET', '/release.json');
     assert.strictEqual(rel.status, 200, 'the release manifest (D43) is served');
     assert.strictEqual((rel.json || JSON.parse(rel.text || rel.body || '{}')).service, 'openre');
+    const met = await request(normal.base, 'GET', '/metrics');
+    assert.strictEqual(met.status, 200, 'loopback /metrics (Track O)');
     const health = await request(normal.base, 'GET', '/api/health');
     const list = await request(normal.base, 'GET', '/api/v1/streams', { token: reader });
     const outboxBefore = normal.rt.db.prepare('SELECT count(*) AS n FROM event_outbox').get().n;

@@ -16,6 +16,11 @@ function createApp({ rt, auth, keys, log = console, fetchImpl }) {
     const app = express();
     app.disable('x-powered-by');
     app.set('trust proxy', config.trustProxy);
+    // GET /metrics (loopback only, Track O): request rates and latencies, process metrics and live
+    // sessions by state, from openvibe-shared/metrics (mounted before every route).
+    const metrics = require('openvibe-shared/metrics').instrument(app, { service: 'openre' });
+    metrics.registry.gauge({ name: 'openre_sessions', help: 'Ingest sessions by state', labelNames: ['state'],
+        collect: () => db.prepare("SELECT state, count(*) AS n FROM ingest_sessions WHERE state IN ('starting','live') GROUP BY state").all().map((r) => ({ labels: { state: r.state }, value: r.n })) });
     app.use(contracts.http.middleware());
     app.use((req, res, next) => {
         res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -41,10 +46,11 @@ function createApp({ rt, auth, keys, log = console, fetchImpl }) {
     // A release directory (/opt/openre.stream/releases/<sha>) is named by its commit and has no .git of its own.
     const releaseRoot = require('path').join(__dirname, '..');
     const commit = [process.env.RELEASE_COMMIT, config.release, require('path').basename(releaseRoot)].find((v) => /^[0-9a-f]{7,40}$/.test(String(v || '')));
-    require('openvibe-shared/release').createRelease({
+    const release = require('openvibe-shared/release').createRelease({
         service: 'openre', root: releaseRoot, packages: ['openvibe-shared', 'openvibe-sdk', 'openvibe-contracts'],
         env: commit ? { ...process.env, RELEASE_COMMIT: commit } : process.env,
-    }).mount(app);
+    });
+    release.mount(app);
 
     // Ready = the database answers and the Network key is loaded. Worker and coordinator state is
     // reported, not required: the API serves reads while a worker generation rolls over.
