@@ -38,7 +38,13 @@ function createApp({ rt, auth, keys, log = console, fetchImpl }) {
 
     app.get('/api/health', (_req, res) => res.json({ status: 'ok', service: 'openre-api', version: pkg.version, release: config.release }));
     // GET /release.json (ADR-016, D43): which release this API runs, its contracts and packages.
-    require('openvibe-shared/release').createRelease({ service: 'openre', root: require('path').join(__dirname, '..'), packages: ['openvibe-shared', 'openvibe-sdk', 'openvibe-contracts'] }).mount(app);
+    // A release directory (/opt/openre.stream/releases/<sha>) is named by its commit and has no .git of its own.
+    const releaseRoot = require('path').join(__dirname, '..');
+    const commit = [process.env.RELEASE_COMMIT, config.release, require('path').basename(releaseRoot)].find((v) => /^[0-9a-f]{7,40}$/.test(String(v || '')));
+    require('openvibe-shared/release').createRelease({
+        service: 'openre', root: releaseRoot, packages: ['openvibe-shared', 'openvibe-sdk', 'openvibe-contracts'],
+        env: commit ? { ...process.env, RELEASE_COMMIT: commit } : process.env,
+    }).mount(app);
 
     // Ready = the database answers and the Network key is loaded. Worker and coordinator state is
     // reported, not required: the API serves reads while a worker generation rolls over.
