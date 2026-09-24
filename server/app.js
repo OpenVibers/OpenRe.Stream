@@ -30,6 +30,8 @@ function createApp({ rt, auth, keys, log = console, fetchImpl }) {
         next();
     });
     app.use(cookieParser());
+    // This site's own pinned copy of the OpenVibe Frame's browser files (openvibe-shared/serve).
+    app.use('/shared', require('openvibe-shared/serve').handler());
 
     // Restore drill (OPENRE_DRILL, ovhost drill): serve reads from the restored copy and nothing
     // else. No writes (they would only change the copy, but a drill must not look like it works),

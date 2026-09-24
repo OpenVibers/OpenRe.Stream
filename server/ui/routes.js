@@ -14,6 +14,7 @@
  * read the cookie, so it cannot produce the token); SameSite=Lax cookies are the second layer.
  */
 const crypto = require('crypto');
+const ovServe = require('openvibe-shared/serve');
 const frame = require('openvibe-shared/frame');
 const express = require('express');
 const { renderPage, esc } = require('./layout');
@@ -81,7 +82,7 @@ function createUiRouter({ rt, auth }) {
     // ── Pages ─────────────────────────────────────────────────
 
     // What shipped on OpenRe.Stream: the shared update log every OpenVibe site has.
-    router.get('/updates', (req, res) => page(req, res, { canonicalPath: '/updates', robots: 'index,follow', title: 'What shipped on OpenRe.Stream', body: frame.updatesBody({ service: 'openre', siteName: 'OpenRe.Stream' }) + frame.shippedScript() }));
+    router.get('/updates', (req, res) => page(req, res, { canonicalPath: '/updates', robots: 'index,follow', title: 'What shipped on OpenRe.Stream', body: frame.updatesBody({ service: 'openre', siteName: 'OpenRe.Stream' }) + `<script src="${ovServe.url('shipped.js')}" defer></script>` }));
     router.get('/', (req, res) => {
         const signedIn = req.caller.kind === 'user' && req.caller.subject;
         const mine = signedIn ? store.definitions.list({ owner_subject: req.caller.subject }) : [];

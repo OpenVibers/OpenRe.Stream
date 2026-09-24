@@ -1,4 +1,5 @@
 'use strict';
+const ovServe = require('openvibe-shared/serve');
 /**
  * Page shell for openre.stream: server-rendered HTML that works without JavaScript, with the shared
  * OpenVibe Frame (theme loader, navbar and footer from openvibe.network, footer SSR from the
@@ -62,10 +63,10 @@ function renderPage({ title, body, user, canonicalPath = '/', robots = 'noindex,
 <meta name="robots" content="${esc(robots)}">
 <link rel="canonical" href="${esc(config.baseUrl + canonicalPath)}">
 ${icon}
-<script src="${NETWORK_URL}/shared/theme-loader.js" defer></script>
+<script src="${ovServe.url('theme-loader.js')}" defer></script>
 <style>${CSS}</style>
-<script src="${NETWORK_URL}/shared/navbar.js" defer></script>
-<script src="${NETWORK_URL}/shared/footer.js" defer></script>
+<script src="${ovServe.url('navbar.js')}" defer></script>
+<script src="${ovServe.url('footer.js')}" defer></script>
 </head>
 <body>
 <div id="navbar-mount"></div>
