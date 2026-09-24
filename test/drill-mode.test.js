@@ -66,6 +66,9 @@ t('openre-api in a drill: reads work and match a normal instance; writes, /play/
     const normal = await bootApi({ dir });
     const created = await request(normal.base, 'POST', '/api/v1/streams', { token: reader, headers: { 'X-OV-Subject': 'usr_01J0000000000000000000000A' }, body: { title: 'Restored' } });
     assert.strictEqual(created.status, 201);
+    const rel = await request(normal.base, 'GET', '/release.json');
+    assert.strictEqual(rel.status, 200, 'the release manifest (D43) is served');
+    assert.strictEqual((rel.json || JSON.parse(rel.text || rel.body || '{}')).service, 'openre');
     const health = await request(normal.base, 'GET', '/api/health');
     const list = await request(normal.base, 'GET', '/api/v1/streams', { token: reader });
     const outboxBefore = normal.rt.db.prepare('SELECT count(*) AS n FROM event_outbox').get().n;
