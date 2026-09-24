@@ -1,7 +1,7 @@
 'use strict';
 /**
  * Page shell for openre.stream: server-rendered HTML that works without JavaScript, with the shared
- * OpenVibe chrome (theme loader, navbar and footer from openvibe.network, footer SSR from the
+ * OpenVibe Frame (theme loader, navbar and footer from openvibe.network, footer SSR from the
  * pinned openvibe-shared release) the way OpenVibe.Community renders it.
  */
 const NETWORK_URL = 'https://openvibe.network';
@@ -44,11 +44,12 @@ function renderPage({ title, body, user, canonicalPath = '/', robots = 'noindex,
         ],
         sessionUrl: '/auth/me',
         loginUrl: `/auth/login?next=${encodeURIComponent(canonicalPath)}`,
+        logoutUrl: '/auth/logout?next={path}',   // Sign out in the shared navbar ends this site's session too
     };
-    const foot = { service: 'openre', variant: 'compact', mount: '#ov-footer', brandName: SITE, legalBase: config.liveUrl,
+    const foot = { service: 'openre', variant: 'compact', mount: '#ov-footer', brandName: SITE, legalBase: config.liveUrl, updates: '/updates',
         links: [{ heading: SITE, items: [{ name: 'Streams', url: '/streams' }, { name: 'Source code', url: 'https://github.com/OpenVibers/OpenRe.Stream' }] }] };
     let footerSsr = '';
-    try { footerSsr = require('openvibe-shared/footer').ssr({ service: 'openre', variant: 'compact' }); } catch { footerSsr = '<footer id="ov-footer"></footer>'; }
+    try { footerSsr = require('openvibe-shared/footer').ssr({ service: 'openre', variant: 'compact', updates: '/updates' }); } catch { footerSsr = '<footer id="ov-footer"></footer>'; }
     let icon = '';
     try { icon = require('openvibe-shared/app-icon').headTags({ site: 'network' }); } catch { icon = ''; }
     return `<!DOCTYPE html>
@@ -76,7 +77,7 @@ ${footerSsr}
 <script>
 window.__OV_PAGE = ${JSON.stringify({ navbar: nav, footer: foot }).replace(/</g, '\\u003c')};
 document.addEventListener('DOMContentLoaded', function () {
-  try { if (window.OpenVibeNavbar) OpenVibeNavbar.init(window.__OV_PAGE.navbar); } catch (e) { /* chrome is optional */ }
+  try { if (window.OpenVibeNavbar) OpenVibeNavbar.init(window.__OV_PAGE.navbar); } catch (e) { /* the Frame is optional */ }
   try { if (window.OpenVibeFooter) OpenVibeFooter.init(window.__OV_PAGE.footer); } catch (e) { /* */ }
 });
 </script>

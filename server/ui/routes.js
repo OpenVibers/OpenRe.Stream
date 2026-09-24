@@ -14,6 +14,7 @@
  * read the cookie, so it cannot produce the token); SameSite=Lax cookies are the second layer.
  */
 const crypto = require('crypto');
+const frame = require('openvibe-shared/frame');
 const express = require('express');
 const { renderPage, esc } = require('./layout');
 const { StoreError } = require('../store/definitions');
@@ -79,6 +80,8 @@ function createUiRouter({ rt, auth }) {
 
     // ── Pages ─────────────────────────────────────────────────
 
+    // What shipped on OpenRe.Stream: the shared update log every OpenVibe site has.
+    router.get('/updates', (req, res) => page(req, res, { canonicalPath: '/updates', robots: 'index,follow', title: 'What shipped on OpenRe.Stream', body: frame.updatesBody({ service: 'openre', siteName: 'OpenRe.Stream' }) + frame.shippedScript() }));
     router.get('/', (req, res) => {
         const signedIn = req.caller.kind === 'user' && req.caller.subject;
         const mine = signedIn ? store.definitions.list({ owner_subject: req.caller.subject }) : [];
@@ -87,7 +90,8 @@ function createUiRouter({ rt, auth }) {
             body: `<h1>OpenRe.Stream</h1>
 <p>Ingest and restream for the OpenVibe network: stream definitions with hashed ingest keys, RTMP ingest sessions that run in transport workers separate from any web deploy, restream outputs with health and logs, and recording requests to OpenVibe.Media.</p>
 <p class="muted">Status: alpha. RTMP ingest and RTMP/SRT restreaming work here; WHIP, WebRTC/SFU and JSMPEG are still served by OpenVibe.Live. Channels, discovery and watch pages stay on <a href="${esc(config.liveUrl)}">openvibe.live</a>.</p>
-${signedIn ? `<h2>Your streams</h2>${mine.length ? streamTable(mine) : '<p class="muted">No streams yet.</p>'}<p><a href="/streams">Manage streams</a></p>` : '<p><a href="/auth/login?next=/streams">Sign in with OpenVibe</a> to manage your streams.</p>'}`,
+${signedIn ? `<h2>Your streams</h2>${mine.length ? streamTable(mine) : '<p class="muted">No streams yet.</p>'}<p><a href="/streams">Manage streams</a></p>` : '<p><a href="/auth/login?next=/streams">Sign in with OpenVibe</a> to manage your streams.</p>'}
+${frame.shipped({ service: 'openre', title: 'Recently shipped on OpenRe.Stream' })}`,
         });
     });
 
