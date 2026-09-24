@@ -19,7 +19,7 @@
 const { KINDS } = require('./store/workers');
 const { assertNotDrill } = require('./config');
 
-function createCoordinator({ rt, media, log = console, holder = `coordinator:${process.pid}` }) {
+function createCoordinator({ rt, media, lineage = null, log = console, holder = `coordinator:${process.pid}` }) {
     const { db, store, config, clock } = rt;
     assertNotDrill(config, 'The session coordinator');
     const now = () => clock.now();
@@ -96,6 +96,7 @@ function createCoordinator({ rt, media, log = console, holder = `coordinator:${p
                 if (!takeLease()) return { skipped: 'lease held by another coordinator' };
                 const out = syncTick();
                 if (media) out.recordingSteps = await store.recordings.process(media);
+                if (lineage) out.lineage = await lineage.refresh();
                 stats.ticks++;
                 stats.lastTickAt = now();
                 stats.lastError = null;
@@ -125,7 +126,7 @@ function createCoordinator({ rt, media, log = console, holder = `coordinator:${p
             await rt.events.stop();
             lease.release.run(holder);
         },
-        stats: () => ({ ...stats }),
+        stats: () => ({ ...stats, lineage: lineage ? lineage.stats() : null }),
     };
 }
 

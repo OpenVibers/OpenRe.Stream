@@ -33,7 +33,16 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
         ofWorker: db.prepare(`SELECT * FROM ingest_sessions WHERE worker_id = ? AND state IN ${OPEN}`),
         expiredLeases: db.prepare(`SELECT * FROM ingest_sessions WHERE state IN ${OPEN} AND lease_expires_at < ?`),
         live: db.prepare("SELECT * FROM ingest_sessions WHERE state = 'live' ORDER BY live_at"),
+        lineage: db.prepare('SELECT resolution FROM definition_lineage WHERE definition_id = ?'),
     };
+
+    /** The Live channel this definition belongs to (the resolver's answer), or null while unresolved. */
+    function liveLineage(definitionId) {
+        const row = q.lineage.get(definitionId);
+        const r = row ? parseJson(row.resolution, null) : null;
+        if (!r || r.status !== 'resolved' || !r.channel) return null;
+        return { channel: { service: 'live', id: String(r.channel.id), slug: r.channel.slug, owner_subject: r.channel.owner_subject || null }, rule: r.rule || null };
+    }
 
     function shape(s) {
         if (!s) return null;
@@ -70,6 +79,7 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
             worker: worker ? { id: worker.id, kind: worker.kind, generation: worker.generation } : null,
             external_refs: definition.external_refs,
             mirror_to_live: definition.mirror_to_live,
+            lineage: liveLineage(definition.id),
             ...extra,
         };
         return {
@@ -207,6 +217,7 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
 
     return {
         get,
+        liveLineage,
         list,
         admit,
         transition,

@@ -18,9 +18,10 @@ if (require.main === module) {
     exitIfDrill(config, 'openre-session-coordinator');
     const rt = openRuntime({ config });
     const media = createMediaClient({ config });
-    const coordinator = createCoordinator({ rt, media });
+    const lineage = require('../server/lineage').createLineage({ db: rt.db, config });
+    const coordinator = createCoordinator({ rt, media, lineage });
     coordinator.start();
-    console.log(`[coordinator] running (events relay ${rt.events.configured ? 'on' : 'off: EVENTS_URL/OV_OAUTH_CLIENT_SECRET not set'}, recordings ${media.configured ? `on → ${config.media.url} app ${config.media.appId}` : 'off'})`);
+    console.log(`[coordinator] running (events relay ${rt.events.configured ? 'on' : 'off: EVENTS_URL/OV_OAUTH_CLIENT_SECRET not set'}, recordings ${media.configured ? `on → ${config.media.url} app ${config.media.appId}` : 'off'}, Live lineage ${lineage.enabled ? 'on' : 'off'})`);
     const prune = setInterval(() => { try { rt.events.outbox.prune(); } catch { /* next time */ } }, 6 * 60 * 60 * 1000);
     prune.unref();
     const shutdown = (sig) => {

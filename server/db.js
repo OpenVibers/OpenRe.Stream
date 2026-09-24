@@ -50,6 +50,14 @@ CREATE TABLE IF NOT EXISTS external_refs (
 );
 CREATE INDEX IF NOT EXISTS idx_external_refs_ref ON external_refs(service, type, ref_id);
 
+-- The Live channel a definition belongs to, as OpenVibe.Live's canonical resolver answers it
+-- (lineage.resolution@1, roadmap D20). Refreshed by the coordinator; session events carry it.
+CREATE TABLE IF NOT EXISTS definition_lineage (
+    definition_id TEXT PRIMARY KEY REFERENCES stream_definitions(id) ON DELETE CASCADE,
+    resolution    TEXT NOT NULL,
+    checked_at    INTEGER NOT NULL
+);
+
 -- Ingest keys are stored as SHA-256 of a 256-bit random secret; the secret is shown once.
 CREATE TABLE IF NOT EXISTS ingest_keys (
     id             TEXT PRIMARY KEY,
