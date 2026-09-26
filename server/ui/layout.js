@@ -46,6 +46,7 @@ function renderPage({ title, body, user, canonicalPath = '/', robots = 'noindex,
         sessionUrl: '/auth/me',
         loginUrl: `/auth/login?next=${encodeURIComponent(canonicalPath)}`,
         logoutUrl: '/auth/logout?next={path}',   // Sign out in the shared navbar ends this site's session too
+        notificationsRealtime: true,   // the bell hears new notifications over OpenVibe.Events (Shared 1.22.0)
     };
     const foot = { service: 'openre', variant: 'compact', mount: '#ov-footer', brandName: SITE, legalBase: config.liveUrl, updates: '/updates',
         links: [{ heading: SITE, items: [{ name: 'Streams', url: '/streams' }, { name: 'Source code', url: 'https://github.com/OpenVibers/OpenRe.Stream' }] }] };
