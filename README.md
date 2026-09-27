@@ -146,14 +146,19 @@ The switch to 1935: once Live no longer listens on 1935, set `OPENRE_RTMP_EXTRA_
 
 ## Deploying
 
-Layout: `/opt/openre.stream/releases/<sha>` (full checkouts), `current` → the release the API and coordinator run, env `/etc/openvibe/openre.env` (see [.env.example](.env.example)), store `/var/lib/openre/openre.db`, units in [deploy/systemd/](deploy/systemd/), nginx [deploy/nginx/openre.stream.conf](deploy/nginx/openre.stream.conf), script [deploy/scripts/deploy.sh](deploy/scripts/deploy.sh):
+Layout: `/opt/openre.stream/repo` (the git clone releases are made from), `/opt/openre.stream/releases/<sha12>` (full checkouts with their own `node_modules`, owned by ubuntu), `current` → the release the API and coordinator run, env `/etc/openvibe/openre.env` (see [.env.example](.env.example)), store `/var/lib/openre/openre.db`, units in [deploy/systemd/](deploy/systemd/), nginx [deploy/nginx/openre.stream.conf](deploy/nginx/openre.stream.conf), script [deploy/scripts/deploy.sh](deploy/scripts/deploy.sh). The release and API phases run through `ovhost deploy openre` (OpenVibe.Host, strategy `release-layout`; roadmap WS-N task 11); the script is a thin wrapper that keeps the old subcommands:
 
 ```bash
-sudo deploy/scripts/deploy.sh release origin/main   # new release dir + npm ci
-sudo deploy/scripts/deploy.sh api                   # restarts openre-api + coordinator ONLY
-sudo deploy/scripts/deploy.sh workers               # starts a new worker generation; old ones drain
-sudo deploy/scripts/deploy.sh status
+sudo deploy/scripts/deploy.sh                       # ovhost deploy openre: release + api in one
+sudo deploy/scripts/deploy.sh release origin/main   # ovhost deploy openre --prepare-only: new release dir + npm ci (prints the sha12)
+sudo deploy/scripts/deploy.sh api [<sha>]           # ovhost deploy openre [--to <sha>]: restarts openre-api + coordinator ONLY, rolls back if not ready
+sudo deploy/scripts/deploy.sh rollback [<sha>]      # ovhost rollback openre
+sudo deploy/scripts/deploy.sh plan                  # ovhost plan openre (or DRY_RUN=1)
+sudo deploy/scripts/deploy.sh workers               # deploy-legacy.sh: starts a new worker generation; old ones drain
+sudo deploy/scripts/deploy.sh status                # deploy-legacy.sh
 ```
+
+- ovhost refuses an API restart while an ingest session is open (`--wait-idle` holds it, `--force` goes ahead), records every attempt (`ovhost releases openre`), prunes releases beyond five but never one a worker generation runs from, and announces the release. When ovhost is missing, too old or does not deploy OpenRe with `release-layout`, the wrapper runs [deploy/scripts/deploy-legacy.sh](deploy/scripts/deploy-legacy.sh), the previous script, unchanged (`OVHOST_LEGACY=1` forces it). `workers`, `status` and `prune` always run it.
 
 - An **API deploy** never restarts a worker unit (no unit depends on another). Viewers of `openre.stream/play/…` reconnect; encoders, restreams and recordings do not notice.
 - A **worker deploy** starts `openre-rtmp-ingest@<sha>` and `openre-restream-worker@<sha>`; older instances are disabled (not stopped) and exit on their own when drained. Never `systemctl restart` a worker instance during a broadcast; `systemctl stop` starts a drain and waits up to 30 min (`TimeoutStopSec`), then kills.

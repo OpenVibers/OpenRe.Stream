@@ -1,110 +1,92 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════
-# OpenRe.Stream deploy (run on the host as root; the lead runs it, never CI).
+# OpenRe.Stream deploy: a thin wrapper around `ovhost deploy openre` (OpenVibe.Host, strategy
+# release-layout; roadmap WS-N task 11; OpenVibe.Host docs/deploy-strategies.md). Run on the host as root.
 #
-#   deploy/scripts/deploy.sh release [<git-ref>]   check out <ref> (default origin/main) into
-#                                                  /opt/openre.stream/releases/<sha>, npm ci
-#   deploy/scripts/deploy.sh api [<sha>]           point `current` at a release, restart
-#                                                  openre-api + openre-session-coordinator.
-#                                                  NEVER touches a transport worker.
-#   deploy/scripts/deploy.sh workers [<sha>]       start a new generation of both workers from a
-#                                                  release; older generations drain and exit on
-#                                                  their own (sessions are not interrupted)
-#   deploy/scripts/deploy.sh status                units, generations, open sessions
-#   deploy/scripts/deploy.sh prune                 remove releases no unit uses (keeps 5)
+#   deploy/scripts/deploy.sh [deploy [<ref>]]       ovhost deploy openre [--to <ref>]: release + api in one
+#   deploy/scripts/deploy.sh release [<ref>]        ovhost deploy openre --prepare-only [--to <ref>]: check out
+#                                                   <ref> (default origin/main) into releases/<sha12>, npm ci,
+#                                                   chown ubuntu; prints the sha12 on stdout as before
+#   deploy/scripts/deploy.sh api [<sha>]            ovhost deploy openre [--to <sha>]: point `current` at that
+#                                                   release (made if missing), restart openre-api and
+#                                                   openre-session-coordinator ONLY, roll back if not ready
+#   deploy/scripts/deploy.sh rollback [<sha>]       ovhost rollback openre [--to <sha>]
+#   deploy/scripts/deploy.sh plan   (or DRY_RUN=1)  ovhost plan openre
+#   deploy/scripts/deploy.sh workers|status|prune   deploy-legacy.sh, unchanged: ovhost never starts, stops or
+#                                                   restarts a worker unit (it prunes releases itself, never
+#                                                   one a worker generation runs from)
+#   --wait-idle / --force after deploy, api or rollback are passed on (ingest sessions refuse an API restart).
 #
-# Layout: /opt/openre.stream/releases/<sha>/ (full checkout + node_modules), `current` symlink
-# for the API and coordinator, one openre-rtmp-ingest@<sha> / openre-restream-worker@<sha>
-# instance per worker generation. Env: /etc/openvibe/openre.env. Store: /var/lib/openre/openre.db.
+# Fallback: deploy-legacy.sh (the previous script, unchanged) with the same arguments when ovhost is missing
+# or too old (no `capabilities`, deploy-api < 1), or the host inventory does not deploy openre with strategy
+# release-layout; OVHOST_LEGACY=1 forces it. There `deploy` is `release` then `api`, and `rollback <sha>` is
+# `api <sha>`.
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
-ROOT=/opt/openre.stream
-REPO=https://github.com/OpenVibers/OpenRe.Stream.git
-API=http://127.0.0.1:4500
-NODE_BIN=${NODE_BIN:-node}
+SERVICE=openre
+STRATEGY=release-layout
+ROOT="${OPENRE_ROOT:-/opt/openre.stream}"
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+LEGACY="${DEPLOY_LEGACY:-$HERE/deploy-legacy.sh}"
+OVHOST="${OVHOST:-/usr/local/bin/ovhost}"
+if [ "${OVHOST_SUDO-auto}" = auto ]; then if [ "$(id -u)" -eq 0 ]; then SUDO=(); else SUDO=(sudo); fi; elif [ -n "${OVHOST_SUDO}" ]; then SUDO=("$OVHOST_SUDO"); else SUDO=(); fi
 
 say() { printf '[openre-deploy] %s\n' "$*" >&2; }
-die() { say "ERROR: $*"; exit 1; }
 
-latest_release() { ls -1t "$ROOT/releases" 2>/dev/null | head -1; }
+SUB="${1:-deploy}"
+[ "$#" -gt 0 ] && shift
+[ "${DRY_RUN:-0}" = 1 ] && SUB=plan
+REF=""
+FLAGS=()
+for a in "$@"; do
+    case "$a" in
+        --wait-idle|--force) FLAGS+=("$a") ;;
+        -*) say "unknown option $a"; exit 1 ;;
+        *) [ -z "$REF" ] || { say "one <ref|sha> at most"; exit 1; }; REF="$a" ;;
+    esac
+done
 
-cmd_release() {
-    local ref=${1:-origin/main}
-    mkdir -p "$ROOT/releases" "$ROOT/repo"
-    if [ ! -d "$ROOT/repo/.git" ]; then git clone --quiet "$REPO" "$ROOT/repo"; fi
-    git -C "$ROOT/repo" fetch --quiet --tags origin
-    local sha
-    sha=$(git -C "$ROOT/repo" rev-parse --short=12 "$ref")
-    local dir="$ROOT/releases/$sha"
-    if [ -d "$dir" ]; then say "release $sha already exists"; echo "$sha"; return; fi
-    git -C "$ROOT/repo" worktree add --detach --quiet "$dir" "$sha"
-    (cd "$dir" && npm ci --omit=dev --no-audit --no-fund --quiet)
-    chown -R ubuntu:ubuntu "$dir"
-    say "release $sha ready at $dir"
-    echo "$sha"
+legacy() {
+    say "$1 — running deploy-legacy.sh (the previous deploy script) instead"
+    case "$SUB" in
+        deploy) bash "$LEGACY" release ${REF:+"$REF"} >/dev/null; exec bash "$LEGACY" api ;;
+        rollback) [ -n "$REF" ] || { say "✗ deploy-legacy.sh needs the release: rollback <sha>"; exit 1; }; exec bash "$LEGACY" api "$REF" ;;
+        plan) say "✗ deploy-legacy.sh has no plan; see deploy-legacy.sh status"; exit 1 ;;
+        *) exec bash "$LEGACY" "$SUB" ${REF:+"$REF"} ;;
+    esac
 }
 
-wait_ready() {
-    for _ in $(seq 1 60); do
-        if curl -sf --max-time 2 "$API/api/ready" >/dev/null; then return 0; fi
-        sleep 1
-    done
-    return 1
+REASON=""
+probe() {
+    if [ "${OVHOST_LEGACY:-0}" = 1 ]; then REASON="OVHOST_LEGACY=1"; return 1; fi
+    if ! command -v "$OVHOST" >/dev/null 2>&1; then REASON="ovhost not found ($OVHOST)"; return 1; fi
+    local caps api
+    if ! caps=$("${SUDO[@]}" "$OVHOST" capabilities "$SERVICE" 2>/dev/null); then REASON="this ovhost has no 'capabilities' (too old) or no inventory entry for $SERVICE"; return 1; fi
+    api=$(printf '%s\n' "$caps" | sed -n 's/^deploy-api=//p')
+    case "$api" in ''|*[!0-9]*) REASON="this ovhost reports no deploy-api (too old)"; return 1 ;; esac
+    if [ "$api" -lt 1 ]; then REASON="this ovhost's deploy-api is $api, 1 is needed"; return 1; fi
+    if ! printf '%s\n' "$caps" | grep -qx "strategy=$STRATEGY"; then REASON="the host inventory does not deploy $SERVICE with strategy $STRATEGY ($(printf '%s\n' "$caps" | sed -n 's/^strategy=//p'))"; return 1; fi
+    if ! printf '%s\n' "$caps" | grep -qx "managed=yes"; then REASON="ovhost does not manage $SERVICE"; return 1; fi
+    return 0
 }
 
-cmd_api() {
-    local sha=${1:-$(latest_release)}
-    [ -n "$sha" ] && [ -d "$ROOT/releases/$sha" ] || die "no release $sha"
-    local prev
-    prev=$(readlink "$ROOT/current" 2>/dev/null || true)
-    ln -sfn "$ROOT/releases/$sha" "$ROOT/current.new" && mv -Tf "$ROOT/current.new" "$ROOT/current"
-    say "current -> $sha (was ${prev:-none}); restarting openre-api and openre-session-coordinator only"
-    systemctl restart openre-api.service
-    systemctl restart openre-session-coordinator.service
-    if ! wait_ready; then
-        say "openre-api not ready after 60 s; rolling back to ${prev:-nothing}"
-        if [ -n "$prev" ]; then
-            ln -sfn "$prev" "$ROOT/current.new" && mv -Tf "$ROOT/current.new" "$ROOT/current"
-            systemctl restart openre-api.service openre-session-coordinator.service
-        fi
-        exit 2
-    fi
-    say "openre-api ready on $sha"
-}
+case "$SUB" in
+    workers|status|prune) exec bash "$LEGACY" "$SUB" ${REF:+"$REF"} ;;
+    deploy|release|api|rollback|plan) ;;
+    *) sed -n '2,24p' "$0"; exit 1 ;;
+esac
 
-cmd_workers() {
-    local sha=${1:-$(latest_release)}
-    [ -n "$sha" ] && [ -d "$ROOT/releases/$sha" ] || die "no release $sha"
-    say "starting worker generation from release $sha (older generations drain by themselves)"
-    systemctl enable --now "openre-rtmp-ingest@$sha.service" "openre-restream-worker@$sha.service"
-    # Disable (not stop) older instances so a reboot does not bring them back; they exit on their own.
-    for unit in $(systemctl list-units --plain --no-legend 'openre-rtmp-ingest@*' 'openre-restream-worker@*' | awk '{print $1}'); do
-        case "$unit" in *"@$sha.service") ;; *) systemctl disable "$unit" >/dev/null 2>&1 || true; say "draining: $unit";; esac
-    done
-}
+probe || legacy "$REASON"
 
-cmd_status() {
-    systemctl --no-pager --plain list-units 'openre-*' || true
-    curl -s --max-time 3 "$API/api/ready" | "$NODE_BIN" -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const r=JSON.parse(s);console.log(JSON.stringify({status:r.status,workers:r.workers,coordinator:r.coordinator,events:r.events},null,2))}catch{console.log(s)}})' || true
-}
-
-cmd_prune() {
-    local keep used
-    used=$( (readlink "$ROOT/current"; systemctl list-units --plain --no-legend 'openre-*@*' | awk '{print $1}' | sed -E 's/.*@(.*)\.service/\1/') | xargs -n1 basename 2>/dev/null | sort -u)
-    keep=$(ls -1t "$ROOT/releases" | head -5)
-    for r in $(ls -1 "$ROOT/releases"); do
-        if echo "$used $keep" | grep -qw "$r"; then continue; fi
-        say "removing release $r"
-        git -C "$ROOT/repo" worktree remove --force "$ROOT/releases/$r"
-    done
-}
-
-case "${1:-}" in
-    release) shift; cmd_release "$@" ;;
-    api) shift; cmd_api "$@" ;;
-    workers) shift; cmd_workers "$@" ;;
-    status) cmd_status ;;
-    prune) cmd_prune ;;
-    *) sed -n '2,20p' "$0"; exit 1 ;;
+TO=()
+[ -n "$REF" ] && TO=(--to "$REF")
+case "$SUB" in
+    plan) exec "${SUDO[@]}" "$OVHOST" plan "$SERVICE" "${TO[@]}" ;;
+    release)
+        # As before: progress on stderr, the release's sha12 alone on stdout (SHA=$(deploy.sh release)).
+        "${SUDO[@]}" "$OVHOST" deploy "$SERVICE" --prepare-only "${TO[@]}" "${FLAGS[@]}" >&2
+        git -c safe.directory="$ROOT/repo" -C "$ROOT/repo" rev-parse --short=12 "${REF:-origin/main}" ;;
+    rollback) say "ovhost rollback $SERVICE ${TO[*]:-} ${FLAGS[*]:-}"; exec "${SUDO[@]}" "$OVHOST" rollback "$SERVICE" "${TO[@]}" "${FLAGS[@]}" ;;
+    *) say "ovhost deploy $SERVICE ${TO[*]:-} ${FLAGS[*]:-}"; exec "${SUDO[@]}" "$OVHOST" deploy "$SERVICE" "${TO[@]}" "${FLAGS[@]}" ;;
 esac
