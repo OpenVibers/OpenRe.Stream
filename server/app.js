@@ -10,6 +10,8 @@ const { createUiRouter } = require('./ui/routes');
 const pkg = require('../package.json');
 
 const SESSION_FLV_RE = /^(ses_[0-9A-HJKMNP-TV-Z]{26})\.flv$/;
+// The worker kinds a switched slot needs (scripts/cutover-preflight.js checks the same two).
+const WORKER_KINDS = Object.freeze(['rtmp-ingest', 'restream']);
 
 function createApp({ rt, auth, keys, log = console, fetchImpl }) {
     const { config, store, events, db } = rt;
@@ -56,30 +58,56 @@ function createApp({ rt, auth, keys, log = console, fetchImpl }) {
     });
     release.mount(app);
 
-    // Ready = the database answers and the Network key is loaded. Worker and coordinator state is
-    // reported, not required: the API serves reads while a worker generation rolls over.
-    app.get('/api/ready', (_req, res) => {
-        let dbOk = false;
-        try { dbOk = db.prepare('SELECT 1 AS ok').get().ok === 1; } catch { dbOk = false; }
-        const checks = { db: dbOk, key: keys.loaded() };
-        const ready = Object.values(checks).every(Boolean);
-        let workers = [];
-        let coordinator = null;
-        try {
-            workers = store.workers.alive().map(w => ({ kind: w.kind, generation: w.generation, state: w.state, heartbeat_age_ms: Date.now() - w.heartbeat_at }));
-            const l = db.prepare("SELECT holder, expires_at FROM leases WHERE name = 'coordinator'").get();
-            coordinator = l ? { holder: l.holder, lease_valid: l.expires_at > Date.now() } : null;
-        } catch { /* reported as empty */ }
-        res.status(ready ? 200 : 503).json({
-            status: ready ? 'ready' : 'not_ready',
-            ...(config.drill ? { mode: 'drill' } : {}),
-            checks,
-            store: { engine: 'sqlite', path_configured: Boolean(config.dbPath) },
-            workers,
-            coordinator,
-            events: dbOk ? events.status() : null,
-        });
+    // Readiness in the openvibe-shared/ready shape (roadmap WS-Q task 7: the registry reads nothing else as green).
+    // Required: the database answers and the Network key is loaded. Optional: a ready worker of each kind, a valid
+    // coordinator lease and the event relay, so a worker generation rolling over degrades the API, which keeps
+    // serving reads, rather than failing it. The worker list, the lease and the outbox stay in the body for
+    // scripts/cutover-preflight.js; a restore drill never publishes, so its relay check is skipped, never ok.
+    const { createReadiness, skip } = require('openvibe-shared/ready');
+    const workerView = () => store.workers.alive().map(w => ({ kind: w.kind, generation: w.generation, state: w.state, heartbeat_age_ms: Date.now() - w.heartbeat_at }));
+    const leaseView = () => {
+        const l = db.prepare("SELECT holder, expires_at FROM leases WHERE name = 'coordinator'").get();
+        return l ? { holder: l.holder, lease_valid: l.expires_at > Date.now() } : null;
+    };
+    const readiness = createReadiness({
+        service: 'openre',
+        release: release.release,
+        checks: [
+            { name: 'db', required: true, description: 'SQLite answers a query', check: () => db.prepare('SELECT 1 AS ok').get().ok === 1 },
+            { name: 'network_key', required: true, description: 'OpenVibe.Network RS256 key (sign-in and service tokens)', check: () => keys.loaded() || 'Network public key not loaded yet' },
+            {
+                name: 'workers', required: false, description: 'a ready rtmp-ingest and restream worker',
+                check: () => {
+                    const alive = workerView();
+                    const missing = WORKER_KINDS.filter(k => !alive.some(w => w.kind === k && w.state === 'ready'));
+                    return missing.length ? `no ready ${missing.join(' or ')} worker` : { ok: true, detail: { ready: alive.filter(w => w.state === 'ready').map(w => `${w.kind}#${w.generation}`) } };
+                },
+            },
+            { name: 'coordinator', required: false, description: 'the coordinator holds a valid lease', check: () => { const l = leaseView(); return (l && l.lease_valid) || 'no valid coordinator lease'; } },
+            {
+                name: 'events_relay', required: false, description: 'durable events to OpenVibe.Events',
+                check: () => {
+                    const st = events.status();
+                    if (!st.configured) return config.drill ? skip('restore drill: never publishes') : 'relay off (EVENTS_URL or OV_OAUTH_CLIENT_SECRET unset): openre.* events wait in the outbox';
+                    return { ok: true, detail: { pending: st.pending, rejected: st.rejected } };
+                },
+            },
+        ],
+        details: (body) => {
+            let workers = [];
+            let coordinator = null;
+            try { workers = workerView(); coordinator = leaseView(); } catch { /* reported as empty */ }
+            const dbOk = body.checks.db && body.checks.db.status === 'ok';
+            return {
+                ...(config.drill ? { mode: 'drill' } : {}),
+                store: { engine: 'sqlite', path_configured: Boolean(config.dbPath) },
+                workers,
+                coordinator,
+                events: dbOk ? events.status() : null,
+            };
+        },
     });
+    app.get('/api/ready', readiness.handler);
 
     const apiJson = express.json({ limit: '256kb', type: ['application/json', 'application/*+json'] });
     const v1 = createV1Router({ rt, auth });

@@ -82,6 +82,7 @@ t('openre-api in a drill: reads work and match a normal instance; writes, /play/
         assert.strictEqual(ready.status, 200);
         assert.strictEqual(ready.body.mode, 'drill');
         assert.strictEqual(ready.body.events.configured, false);
+        assert.deepStrictEqual([ready.body.checks.events_relay.status, ready.body.checks.events_relay.reason], ['skipped', 'restore drill: never publishes'], 'a drill\'s relay is skipped, never ok');
         const h = await request(drill.base, 'GET', '/api/health');
         assert.strictEqual(h.text, health.text, '/api/health is byte-identical (ovhost compares it)');
         const l = await request(drill.base, 'GET', '/api/v1/streams', { token: reader });

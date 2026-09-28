@@ -15,8 +15,15 @@ t('boot', async () => {
     api = await bootApi();
     const ready = await request(api.base, 'GET', '/api/ready');
     assert.strictEqual(ready.status, 200);
-    assert.strictEqual(ready.body.checks.db, true);
-    assert.strictEqual(ready.body.checks.key, true);
+    // The openvibe-shared/ready shape (WS-Q task 7): required db and Network key; no workers in this test, so the
+    // optional workers check degrades the API rather than failing it.
+    assert.strictEqual(ready.body.service, 'openre');
+    assert.strictEqual(ready.body.checks.db.status, 'ok');
+    assert.strictEqual(ready.body.checks.network_key.status, 'ok');
+    assert.deepStrictEqual([ready.body.checks.db.required, ready.body.checks.network_key.required, ready.body.checks.workers.required], [true, true, false]);
+    assert.ok(ready.body.degraded.includes('workers'));
+    assert.strictEqual(ready.body.status, 'degraded');
+    assert.ok(Array.isArray(ready.body.workers) && 'coordinator' in ready.body && 'store' in ready.body, 'the preflight fields stay');
 });
 
 t('anonymous and ungranted callers are refused with problem+json', async () => {

@@ -32,7 +32,7 @@ The ingest/restream control plane and runtime extracted from OpenVibe.Live. Live
 - OpenVibe.Network (JWKS for service tokens and user JWTs; OAuth client `openre`; client-credentials tokens for Events/Media)
 - OpenVibe.Events (event relay; optional: rows wait in the outbox)
 - OpenVibe.Media (recording requests; optional: sessions work without it)
-- OpenVibe.Contracts v0.49.0 (ids, problem+json, capability checks), OpenVibe.SDK v0.12.0 (outbox, token client, per-actor limits), OpenVibe.Shared v1.22.0 (chrome), pinned by release tarball
+- OpenVibe.Contracts v0.49.0 (ids, problem+json, capability checks), OpenVibe.SDK v0.12.0 (outbox, token client, per-actor limits), OpenVibe.Shared v1.24.0 (chrome, readiness), pinned by release tarball
 - OpenVibe.Live (`live.lineage.resolve`: which channel a Live-linked stream belongs to)
 - node-media-server 2.7.4 (the RTMP session code Live runs) and the system ffmpeg
 
