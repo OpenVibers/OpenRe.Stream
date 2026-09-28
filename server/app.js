@@ -83,7 +83,9 @@ function createApp({ rt, auth, keys, log = console, fetchImpl }) {
 
     const apiJson = express.json({ limit: '256kb', type: ['application/json', 'application/*+json'] });
     const v1 = createV1Router({ rt, auth });
-    app.use('/api/v1', apiJson, auth.middleware({ services: true }), v1.router);
+    // Per-actor limits on a signed-in person's writes (server/api/actor-limits.js; roadmap WS-R task 4).
+    const actorLimits = require('./api/actor-limits').createOpenReActorLimits({ registry: metrics.registry });
+    app.use('/api/v1', apiJson, auth.middleware({ services: true }), actorLimits, v1.router);
 
     // Public HTTP-FLV playback of a live session, proxied from the worker that holds it. A viewer
     // deploy of this API interrupts viewers of this URL (they reconnect), never the ingest.
