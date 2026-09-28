@@ -2,7 +2,7 @@
 
 > Ingest and restream: stream definitions, keys, sessions, transport workers, outputs and output health.
 
-**Status:** alpha (roadmap Wave 7). Tested end to end with real RTMP. Deployed internally on `openvibe-ovh` since 2026-09-23 (API on 127.0.0.1:4500, RTMP ingest bound to 127.0.0.1:1936, one rehearsal broadcast passed), but not launched: no broadcaster uses it (all 102 Live slots are still `ingest_authority=live`), and Live's side of the integration is deployed but inert until `OPENRE_*` is set in Live. The domain keeps its placeholder page on OpenVibe.Sites until the launch rule below is met.
+**Status:** alpha (roadmap Wave 7). Tested end to end with real RTMP. Deployed internally on `openvibe-ovh` since 2026-09-23 (API and coordinator on 127.0.0.1:4500; RTMP ingest public on port 1936 at `ingest.openre.stream` since the cutover runbook's phase A on 2026-09-23; Live wired with `OPENRE_URL` and an `openre.session.*` subscription; one rehearsal broadcast passed), but not launched: no broadcaster uses it, since every Live slot is still ingested by Live until its per-slot cutover (`docs/cutover.md` phase B). The domain keeps its placeholder page on OpenVibe.Sites until the launch rule below is met.
 **Domain:** `openre.stream` (UI + API), `ingest.openre.stream` (RTMP, DNS only)
 **Plan:** OpenVibe End-to-End Realignment & Implementation Plan, revision 3 (20 Sep 2026), §10, §10.5, §15.10; ADR-009 (binding), ADR-004, ADR-006, ADR-007.
 **License:** AGPL-3.0 (same as every OpenVibe service).
@@ -32,7 +32,8 @@ The ingest/restream control plane and runtime extracted from OpenVibe.Live. Live
 - OpenVibe.Network (JWKS for service tokens and user JWTs; OAuth client `openre`; client-credentials tokens for Events/Media)
 - OpenVibe.Events (event relay; optional: rows wait in the outbox)
 - OpenVibe.Media (recording requests; optional: sessions work without it)
-- OpenVibe.Contracts (ids, problem+json, capability checks), OpenVibe.SDK v0.2.2 (outbox, token client), OpenVibe.Shared (chrome)
+- OpenVibe.Contracts v0.49.0 (ids, problem+json, capability checks), OpenVibe.SDK v0.12.0 (outbox, token client, per-actor limits), OpenVibe.Shared v1.22.0 (chrome), pinned by release tarball
+- OpenVibe.Live (`live.lineage.resolve`: which channel a Live-linked stream belongs to)
 - node-media-server 2.7.4 (the RTMP session code Live runs) and the system ffmpeg
 
 ## What is ported, per protocol
@@ -79,6 +80,23 @@ npm test                          # every test/*.test.js; the RTMP e2e test need
 
 Node 22 (≥ 22.12 for `reusePort`): `fnm exec --using=22.22.1 npm test`.
 
+## Capabilities
+
+Implemented here (the service manifest's `capabilities`, audience `openvibe.openre`; routes under
+[Auth](#auth)): `openre.stream.read`, `openre.stream.write`, `openre.key.rotate`,
+`openre.session.read`, `openre.session.end`, `openre.output.read` and `openre.output.write`.
+
+Called elsewhere, as the service principal `openre` (client credentials from Network):
+
+| Service | Grant | Why |
+|---|---|---|
+| OpenVibe.Events | `events.event.publish` | the coordinator's outbox relay (`openre.*` events) |
+| OpenVibe.Live | `live.lineage.resolve` | the channel a Live-linked stream definition belongs to |
+| OpenVibe.Media | the `live` tenant key today (`MEDIA_API_KEY`); `media.object.upload` once `OPENRE_MEDIA_AUTH=service` | recording requests |
+
+The full grant list, including what Live needs to call OpenRe, is under "Grants the lead adds in
+Network" below.
+
 ## Auth
 
 Services call with an OpenVibe.Network client-credentials token (audience `openvibe.openre`), verified offline against the Network JWKS; each route checks one capability. A service may send `X-OV-Subject: usr_…` to act for one owner (it is then limited to that owner's streams). Browsers/owners use the Network user JWT (`ov_token` cookie from `/auth/login`, or Bearer) and act on their own streams; Network role `admin` is staff (read all, end sessions).
@@ -93,12 +111,13 @@ Services call with an OpenVibe.Network client-credentials token (audience `openv
 | `openre.output.read` | `GET /api/v1/streams/:id/destinations`, `GET /api/v1/sessions/:id/outputs`, `GET /api/v1/destinations/:id/logs`, `GET /api/v1/outputs/:id/logs` |
 | `openre.output.write` | `POST /api/v1/streams/:id/destinations`, `PATCH`/`DELETE /api/v1/destinations/:id`, `POST /api/v1/destinations/:id/test|start|stop` |
 
-The ids were proposed in [docs/capabilities-proposal/](docs/capabilities-proposal/) with the service manifest ([docs/service-manifest-proposal.json](docs/service-manifest-proposal.json)) and are registered in `openvibe-contracts` since v0.16.0 (this repository pins v0.33.0). `server/auth/index.js` grants them with the contracts rule (exact id or `family.*`) and defers to `capabilities.check()` for every id the installed contracts know. Errors are RFC 9457 problem+json with a stable `code`.
+The ids were proposed in [docs/capabilities-proposal/](docs/capabilities-proposal/) with the service manifest ([docs/service-manifest-proposal.json](docs/service-manifest-proposal.json)) and are registered in `openvibe-contracts` since v0.16.0 (this repository pins v0.49.0). `server/auth/index.js` grants them with the contracts rule (exact id or `family.*`) and defers to `capabilities.check()` for every id the installed contracts know. Errors are RFC 9457 problem+json with a stable `code`.
 
 **Grants the lead adds in Network** (`[client, capability, audience]`):
 
 - `[live, openre.stream.read, openvibe.openre]`, `[live, openre.stream.write, openvibe.openre]`, `[live, openre.key.rotate, openvibe.openre]`, `[live, openre.session.read, openvibe.openre]`
 - `[openre, events.event.publish, openvibe.events]`
+- `[openre, live.lineage.resolve, openvibe.live]` (the channel lineage of Live-linked streams)
 - `[live, events.subscription.manage, openvibe.events]` if Live creates its own `openre.session.*` subscription (or an operator creates it)
 - Media, only when `OPENRE_MEDIA_AUTH=service`: `[openre, media.object.upload, openvibe.media]` with namespace `live` — and Media must first name that capability on its VOD create/ingest/finalize/delete routes (today they accept only the tenant app key; see "Recording").
 - OAuth client `openre` (authorization code + client credentials) with redirect `https://openre.stream/auth/callback`.
@@ -125,6 +144,8 @@ Written to `event_outbox` in the same SQLite transaction as the change (openvibe
 When a session is live and its definition says `recording_mode` `vod` or `clips`, the coordinator asks Media, exactly as Live's recorder does: `POST /api/v1/<MEDIA_APP_ID>/vods` (title, Live `user_id`/`managed_stream_id` from the typed references so the VOD lands in the Live channel's gallery, visibility, `meta.openre_session_id`), then `POST …/vods/:id/ingest/rtmp { rtmp_url: rtmp://127.0.0.1:<play port>/live/<session id> }`. When the session ends: `POST …/finalize` (clips-only recordings are then deleted, as Live does). A disk-space refusal deletes the empty VOD shell and retries every 5 min while the session is live. Media finalises. Auth today is the Media tenant key (`MEDIA_API_KEY`, the `live` app's key — the interim compromise, as Live holds it too); the target is `OPENRE_MEDIA_AUTH=service` once Media accepts service tokens on those routes. Known gap: the VOD's `stream_id` (a Live id) is not set, because Live creates its `streams` row from the event; Live links the VOD by slot, user and time.
 
 ## Security notes
+
+Reporting a vulnerability: [SECURITY.md](SECURITY.md).
 
 - Ingest keys: 256-bit random, `ork_` + 43 base64url characters, SHA-256 at rest, compared by indexed lookup inside the RTMP handshake. Never logged (only the last four characters), never in an event, never in a URL after the handshake (the publish is renamed to the session id).
 - Destination keys and SRT passphrases: AES-256-GCM (`OPENRE_SECRETS_KEY`, rotation via `OPENRE_SECRETS_KEY_PREVIOUS`); APIs return `****` + last four only; ffmpeg command lines are logged redacted.
@@ -164,6 +185,10 @@ sudo deploy/scripts/deploy.sh status                # deploy-legacy.sh
 - A **worker deploy** starts `openre-rtmp-ingest@<sha>` and `openre-restream-worker@<sha>`; older instances are disabled (not stopped) and exit on their own when drained. Never `systemctl restart` a worker instance during a broadcast; `systemctl stop` starts a drain and waits up to 30 min (`TimeoutStopSec`), then kills.
 - Worker instances are named after the release. `deploy.sh workers <sha>` for a release that already runs a generation does nothing. An env change that workers read, such as `OPENRE_RTMP_BIND`, takes effect with the next release's generation (docs/cutover.md A3).
 - **Restore drills** (`ovhost drill openre`, OpenVibe.Host) start only `openre-api`, with `OPENRE_DRILL=1`, on a restored copy of the database. In drill mode the API serves reads and refuses writes, `/play/` and sign-in with 503 `openre.drill_read_only`. The coordinator and every worker exit before they open the database. The event relay and Media calls are off (`test/drill-mode.test.js`). Never set `OPENRE_DRILL` in `/etc/openvibe/openre.env`; the preflight's `env` check fails if it is set.
+- Rollback: when `openre-api` is not ready within 60 s ovhost switches `current` back to the previous
+  release by itself; afterwards `sudo deploy/scripts/deploy.sh rollback [<sha>]` (`ovhost rollback
+  openre`). Workers roll back by starting the previous generation (`deploy.sh workers <sha>`); the
+  coordinator drains the newer one. The schema code only adds, so an older release reads a newer database.
 - First install: create the `openre` OAuth client and grants in Network, `/etc/openvibe/openre.env` (0600), the certificate for `openre.stream`, DNS for `openre.stream` (proxied) and `ingest.openre.stream` (DNS only), firewall 1936/tcp, then `release`, `api`, `workers`, and `systemctl enable --now openre-api openre-session-coordinator`.
 
 ## Live integration (patch)
@@ -239,8 +264,8 @@ JavaScript; real persistence and end-to-end workflows; capability and event regi
 sitemap/robots/feed behaviour; acceptance tests proving the advertised functionality. Today the
 runtime, identity integration, server-rendered routes, persistence, capability registration (contracts v0.16.0),
 the migration strategy and the acceptance tests are in place, and the service is deployed
-internally (loopback only). An independent security review, a public ingest port and the first
-slot cutover are not.
+internally with its public ingest port open. An independent security review and the first slot
+cutover are not.
 
 ---
 
