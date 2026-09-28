@@ -17,7 +17,7 @@ const {
 } = require('./helpers');
 
 if (!hasFfmpeg()) {
-    console.log('rtmp-e2e: SKIPPED (no ffmpeg on PATH)');
+    console.log('rtmp-e2e: skipped (no ffmpeg on PATH)');
     process.exit(0);
 }
 
