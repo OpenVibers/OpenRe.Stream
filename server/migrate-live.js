@@ -18,8 +18,8 @@
 
 const { validateDestinationUrl } = require('./destination-url');
 
-function columns(db, table) {
-    try { return new Set(db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name)); } catch { return new Set(); }
+async function columns(db, table) {
+    try { return new Set((await db.prepare(`PRAGMA table_info(${table})`).all()).map(c => c.name)); } catch { return new Set(); }
 }
 
 function recordingModeOf(ms, channel) {
@@ -38,21 +38,21 @@ function visibilityOf(ms, channel) {
  * migrate({ liveDb, rt, apply, onlySlots }) -> report
  * report = { slots: [...], destinations: [...], channels: Map username → {...}, counts }
  */
-function migrate({ liveDb, rt, apply = false, onlySlots = null, now = () => Date.now() }) {
+async function migrate({ liveDb, rt, apply = false, onlySlots = null, now = () => Date.now() }) {
     const { db, store, config } = rt;
-    const msCols = columns(liveDb, 'managed_streams');
+    const msCols = await columns(liveDb, 'managed_streams');
     if (!msCols.size) throw new Error('the Live snapshot has no managed_streams table');
-    const rdCols = columns(liveDb, 'restream_destinations');
-    const laCols = columns(liveDb, 'linked_accounts');
-    const chCols = columns(liveDb, 'channels');
+    const rdCols = await columns(liveDb, 'restream_destinations');
+    const laCols = await columns(liveDb, 'linked_accounts');
+    const chCols = await columns(liveDb, 'channels');
 
     const mapGet = db.prepare("SELECT * FROM migration_map WHERE source_system = 'live' AND source_type = ? AND source_id = ?");
     const mapPut = db.prepare(`INSERT INTO migration_map (source_system, source_type, source_id, target_type, target_id, status, reason, imported_at)
         VALUES ('live', @source_type, @source_id, @target_type, @target_id, @status, @reason, @at)
         ON CONFLICT(source_system, source_type, source_id) DO UPDATE SET target_type = @target_type, target_id = @target_id, status = @status, reason = @reason, imported_at = @at`);
-    const record = (row) => { if (apply) mapPut.run({ target_type: null, target_id: null, reason: null, ...row, at: now() }); };
+    const record = async (row) => { if (apply) await mapPut.run({ target_type: null, target_id: null, reason: null, ...row, at: now() }); };
 
-    const slots = liveDb.prepare(`SELECT ms.*, u.username, u.display_name, u.is_banned FROM managed_streams ms JOIN users u ON u.id = ms.user_id ORDER BY ms.user_id, ms.id`).all()
+    const slots = (await liveDb.prepare(`SELECT ms.*, u.username, u.display_name, u.is_banned FROM managed_streams ms JOIN users u ON u.id = ms.user_id ORDER BY ms.user_id, ms.id`).all())
         .filter(ms => !onlySlots || onlySlots.includes(Number(ms.id)));
     const subjectOf = laCols.has('subject_id')
         ? liveDb.prepare("SELECT subject_id FROM linked_accounts WHERE service = 'network' AND user_id = ? AND subject_id IS NOT NULL")
@@ -73,11 +73,11 @@ function migrate({ liveDb, rt, apply = false, onlySlots = null, now = () => Date
 
     for (const ms of slots) {
         const ch = channel(ms);
-        const prior = mapGet.get('managed_stream', String(ms.id));
+        const prior = await mapGet.get('managed_stream', String(ms.id));
         const entry = { live_id: ms.id, slug: ms.slug || null, title: ms.title, protocol: ms.protocol, streaming_method: ms.streaming_method || null, definition_id: null, status: null, reason: null, destinations: [] };
         ch.slots.push(entry);
 
-        if (prior && prior.status === 'imported' && store.definitions.get(prior.target_id)) {
+        if (prior && prior.status === 'imported' && await store.definitions.get(prior.target_id)) {
             entry.definition_id = prior.target_id;
             entry.status = 'imported';
             entry.reason = 'already imported';
@@ -87,12 +87,12 @@ function migrate({ liveDb, rt, apply = false, onlySlots = null, now = () => Date
             if (!subject) {
                 entry.status = 'held';
                 entry.reason = `Live user ${ms.user_id} has no canonical subject yet (it is recorded when they next sign in to Live); the slot is imported on a later run`;
-                record({ source_type: 'managed_stream', source_id: String(ms.id), status: 'held', reason: entry.reason });
+                await record({ source_type: 'managed_stream', source_id: String(ms.id), status: 'held', reason: entry.reason });
                 count('held');
             } else if (ms.is_banned) {
                 entry.status = 'excluded';
                 entry.reason = 'the Live account is banned';
-                record({ source_type: 'managed_stream', source_id: String(ms.id), status: 'excluded', reason: entry.reason });
+                await record({ source_type: 'managed_stream', source_id: String(ms.id), status: 'excluded', reason: entry.reason });
                 count('excluded');
             } else {
                 const chRow = channelOf ? channelOf.get(ms.user_id) : null;
@@ -113,10 +113,10 @@ function migrate({ liveDb, rt, apply = false, onlySlots = null, now = () => Date
                 };
                 entry.recording_mode = fields.recording_mode;
                 if (apply) {
-                    const existing = store.definitions.findByRef('live', 'managed_stream', String(ms.id));
-                    const def = existing || store.definitions.create(fields).definition;   // the new key is discarded unseen
+                    const existing = await store.definitions.findByRef('live', 'managed_stream', String(ms.id));
+                    const def = existing || (await store.definitions.create(fields)).definition;   // the new key is discarded unseen
                     entry.definition_id = def.id;
-                    record({ source_type: 'managed_stream', source_id: String(ms.id), target_type: 'stream_definition', target_id: def.id, status: 'imported', reason: 'new key issued, old key not imported' });
+                    await record({ source_type: 'managed_stream', source_id: String(ms.id), target_type: 'stream_definition', target_id: def.id, status: 'imported', reason: 'new key issued, old key not imported' });
                 }
                 entry.status = 'imported';
                 entry.reason = 'new key issued, old key not imported';
@@ -127,28 +127,28 @@ function migrate({ liveDb, rt, apply = false, onlySlots = null, now = () => Date
         // Destinations: the slot's own, plus unbound ones when the user has exactly one slot.
         const own = destsOfSlot ? destsOfSlot.all(ms.id) : [];
         const unbound = unboundOfUser ? unboundOfUser.all(ms.user_id) : [];
-        const oneSlot = slotsOfUser.get(ms.user_id).n === 1;
+        const oneSlot = (await slotsOfUser.get(ms.user_id)).n === 1;
         const candidates = [...own.map(d => ({ d, unbound: false })), ...unbound.map(d => ({ d, unbound: true }))];
         for (const { d, unbound: isUnbound } of candidates) {
             const di = { live_id: d.id, platform: d.platform, name: d.name || d.platform, status: null, reason: null, destination_id: null, oauth_linked: Boolean(d.connection_id) };
             entry.destinations.push(di);
             report.destinations.push(di);
-            const priorD = mapGet.get('restream_destination', String(d.id));
-            if (priorD && priorD.target_id && store.outputs.destinationRow(priorD.target_id)) {
+            const priorD = await mapGet.get('restream_destination', String(d.id));
+            if (priorD && priorD.target_id && await store.outputs.destinationRow(priorD.target_id)) {
                 di.status = priorD.status; di.reason = priorD.reason || 'already imported'; di.destination_id = priorD.target_id; count('skipped');
                 continue;
             }
             if (isUnbound && !oneSlot) {
                 di.status = 'held';
                 di.reason = 'not bound to a slot and the user has several slots (Live pushed unbound destinations from every slot); bind it in Live or add it on openre.stream';
-                record({ source_type: 'restream_destination', source_id: String(d.id), status: 'held', reason: di.reason });
+                await record({ source_type: 'restream_destination', source_id: String(d.id), status: 'held', reason: di.reason });
                 count('held');
                 continue;
             }
             if (entry.status !== 'imported') {
                 di.status = 'held';
                 di.reason = `its slot is ${entry.status}`;
-                record({ source_type: 'restream_destination', source_id: String(d.id), status: 'held', reason: di.reason });
+                await record({ source_type: 'restream_destination', source_id: String(d.id), status: 'held', reason: di.reason });
                 count('held');
                 continue;
             }
@@ -174,12 +174,12 @@ function migrate({ liveDb, rt, apply = false, onlySlots = null, now = () => Date
                 if (hold) {
                     // Keep the (sealed) key so the owner only has to fix the URL; the row stays
                     // disabled until they do. The original URL is kept in the hold reason.
-                    created = store.outputs.createDestination(entry.definition_id, { ...input, server_url: 'rtmp://held.invalid/app', enabled: false }, { hold_reason: `${hold} (was ${String(d.server_url || '').replace(/\/[^/]*$/, '/…')})` });
+                    created = await store.outputs.createDestination(entry.definition_id, { ...input, server_url: 'rtmp://held.invalid/app', enabled: false }, { hold_reason: `${hold} (was ${String(d.server_url || '').replace(/\/[^/]*$/, '/…')})` });
                 } else {
-                    created = store.outputs.createDestination(entry.definition_id, input);
+                    created = await store.outputs.createDestination(entry.definition_id, input);
                 }
                 di.destination_id = created.id;
-                record({ source_type: 'restream_destination', source_id: String(d.id), target_type: 'destination', target_id: created.id, status: hold ? 'held' : 'imported', reason: hold || null });
+                await record({ source_type: 'restream_destination', source_id: String(d.id), target_type: 'destination', target_id: created.id, status: hold ? 'held' : 'imported', reason: hold || null });
             }
             di.status = hold ? 'held' : 'imported';
             di.reason = hold;

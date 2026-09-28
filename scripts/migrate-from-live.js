@@ -24,7 +24,7 @@ function arg(name) {
     return i > 0 ? process.argv[i + 1] : null;
 }
 
-function main() {
+async function main() {
     require('dotenv').config({ path: process.env.OPENRE_ENV_FILE || path.join(process.cwd(), '.env') });
     const { load } = require('../server/config');
     const { openRuntime } = require('../server/store');
@@ -35,9 +35,9 @@ function main() {
     const config = load();
     if (apply && !config.secretsKey) { console.error('OPENRE_SECRETS_KEY is required to import destinations'); process.exit(2); }
     const liveDb = new Database(liveDbPath, { readonly: true, fileMustExist: true });
-    const rt = openRuntime({ config, log: { log() {}, warn: console.warn, error: console.error } });
+    const rt = await openRuntime({ config, log: { log() {}, warn: console.warn, error: console.error } });
     const onlySlots = arg('slots') ? arg('slots').split(',').map(Number).filter(Number.isFinite) : null;
-    const report = migrate({ liveDb, rt, apply, onlySlots });
+    const report = await migrate({ liveDb, rt, apply, onlySlots });
     const r = config.rtmp;
     const md = checklist(report, { openreUrl: config.baseUrl, rtmpUrl: `rtmp://${r.publicHost}${r.publicPort === 1935 ? '' : `:${r.publicPort}`}/live` });
     const out = arg('checklist');

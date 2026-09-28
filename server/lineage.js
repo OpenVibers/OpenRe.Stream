@@ -43,10 +43,10 @@ function createLineage({ db, config, env = process.env, fetchImpl = globalThis.f
     async function refresh() {
         if (!enabled) return { skipped: 'off' };
         const out = { checked: 0, resolved: 0 };
-        for (const def of q.due.all(now() - maxAgeMs, batch)) {
+        for (const def of await q.due.all(now() - maxAgeMs, batch)) {
             try {
                 const r = await resolveOne(def);
-                q.save.run(def.id, JSON.stringify(r), now());
+                await q.save.run(def.id, JSON.stringify(r), now());
                 out.checked++; stats.refreshed++;
                 if (r.status === 'resolved') { out.resolved++; stats.resolved++; } else stats.unresolved++;
             } catch (err) {

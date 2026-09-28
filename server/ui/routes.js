@@ -53,8 +53,8 @@ function createUiRouter({ rt, auth }) {
         return false;
     }
 
-    function ownDefinition(req, res, id) {
-        const d = store.definitions.get(id);
+    async function ownDefinition(req, res, id) {
+        const d = await store.definitions.get(id);
         if (!d || d.state === 'archived' || !auth.canAccess(req.caller, d.owner_subject)) {
             page(req, res, { title: 'Not found', body: '<h1>Stream not found</h1><p><a href="/streams">Your streams</a></p>' }, 404);
             return null;
@@ -62,9 +62,9 @@ function createUiRouter({ rt, auth }) {
         return d;
     }
 
-    function ownDestination(req, res, id) {
-        const dest = store.outputs.destinationRow(id);
-        const d = dest ? ownDefinition(req, res, dest.definition_id) : null;
+    async function ownDestination(req, res, id) {
+        const dest = await store.outputs.destinationRow(id);
+        const d = dest ? await ownDefinition(req, res, dest.definition_id) : null;
         if (!dest && !res.headersSent) page(req, res, { title: 'Not found', body: '<h1>Destination not found</h1>' }, 404);
         return d ? { dest, definition: d } : null;
     }
@@ -83,33 +83,33 @@ function createUiRouter({ rt, auth }) {
 
     // What shipped on OpenRe.Stream: the shared update log every OpenVibe site has.
     router.get('/updates', (req, res) => page(req, res, { canonicalPath: '/updates', robots: 'index,follow', title: 'What shipped on OpenRe.Stream', body: frame.updatesBody({ service: 'openre', siteName: 'OpenRe.Stream' }) + `<script src="${ovServe.url('shipped.js')}" defer></script>` }));
-    router.get('/', (req, res) => {
+    router.get('/', async (req, res) => {
         const signedIn = req.caller.kind === 'user' && req.caller.subject;
-        const mine = signedIn ? store.definitions.list({ owner_subject: req.caller.subject }) : [];
+        const mine = signedIn ? await store.definitions.list({ owner_subject: req.caller.subject }) : [];
         page(req, res, {
             canonicalPath: '/', robots: 'index,follow',
             body: `<h1>OpenRe.Stream</h1>
 <p>Ingest and restream for the OpenVibe network: stream definitions with hashed ingest keys, RTMP ingest sessions that run in transport workers separate from any web deploy, restream outputs with health and logs, and recording requests to OpenVibe.Media.</p>
 <p class="muted">Status: alpha. RTMP ingest and RTMP/SRT restreaming work here; WHIP, WebRTC/SFU and JSMPEG are still served by OpenVibe.Live. Channels, discovery and watch pages stay on <a href="${esc(config.liveUrl)}">openvibe.live</a>.</p>
-${signedIn ? `<h2>Your streams</h2>${mine.length ? streamTable(mine) : '<p class="muted">No streams yet.</p>'}<p><a href="/streams">Manage streams</a></p>` : '<p><a href="/auth/login?next=/streams">Sign in with OpenVibe</a> to manage your streams.</p>'}
+${signedIn ? `<h2>Your streams</h2>${mine.length ? await streamTable(mine) : '<p class="muted">No streams yet.</p>'}<p><a href="/streams">Manage streams</a></p>` : '<p><a href="/auth/login?next=/streams">Sign in with OpenVibe</a> to manage your streams.</p>'}
 ${frame.shipped({ service: 'openre', title: 'Recently shipped on OpenRe.Stream' })}`,
         });
     });
 
-    function streamTable(list) {
-        return `<table><tr><th>Stream</th><th>State</th><th>Now</th><th>Linked to</th></tr>${list.map((d) => {
-            const open = store.sessions.openFor(d.id)[0];
+    async function streamTable(list) {
+        return `<table><tr><th>Stream</th><th>State</th><th>Now</th><th>Linked to</th></tr>${(await Promise.all(list.map(async (d) => {
+            const open = (await store.sessions.openFor(d.id))[0];
             const refs = d.external_refs.map(r => `${r.service}:${r.type}:${r.id}`).join(', ');
             return `<tr><td><a href="/streams/${esc(d.id)}">${esc(d.title)}</a></td><td>${pill(d.state)}</td><td>${open ? pill(open.state) : '<span class="muted">offline</span>'}</td><td class="mono">${esc(refs) || '—'}</td></tr>`;
-        }).join('')}</table>`;
+        }))).join('')}</table>`;
     }
 
-    router.get('/streams', (req, res) => {
+    router.get('/streams', async (req, res) => {
         if (!needUser(req, res)) return;
-        const list = store.definitions.list({ owner_subject: req.caller.subject });
+        const list = await store.definitions.list({ owner_subject: req.caller.subject });
         page(req, res, {
             title: 'Streams', canonicalPath: '/streams',
-            body: `<h1>Streams</h1>${list.length ? streamTable(list) : '<p class="muted">No streams yet.</p>'}
+            body: `<h1>Streams</h1>${list.length ? await streamTable(list) : '<p class="muted">No streams yet.</p>'}
 <div class="card"><h2>New stream</h2>${form(req, '/streams', `
 <label>Title</label><input type="text" name="title" maxlength="140" required>
 <div class="row"><div><label>Recording</label><select name="recording_mode"><option value="vod">Record a VOD</option><option value="clips">Clips only</option><option value="none">Do not record</option></select></div>
@@ -118,8 +118,8 @@ ${frame.shipped({ service: 'openre', title: 'Recently shipped on OpenRe.Stream' 
         });
     });
 
-    function keyPage(req, res, definition, key, heading) {
-        const ep = store.definitions.ingestEndpoints(definition);
+    async function keyPage(req, res, definition, key, heading) {
+        const ep = await store.definitions.ingestEndpoints(definition);
         res.set('Cache-Control', 'no-store');
         page(req, res, {
             title: heading, canonicalPath: `/streams/${definition.id}`,
@@ -131,26 +131,26 @@ ${frame.shipped({ service: 'openre', title: 'Recently shipped on OpenRe.Stream' 
         });
     }
 
-    post('/streams', (req, res) => {
+    post('/streams', async (req, res) => {
         const b = req.body || {};
-        const { definition, key } = store.definitions.create({
+        const { definition, key } = await store.definitions.create({
             owner_subject: req.caller.subject, title: b.title, recording_mode: b.recording_mode,
             recording_visibility: b.recording_visibility, created_by: req.caller.subject,
         });
-        keyPage(req, res, definition, key, 'Stream created');
+        await keyPage(req, res, definition, key, 'Stream created');
     });
 
-    router.get('/streams/:id', (req, res) => {
+    router.get('/streams/:id', async (req, res) => {
         if (!needUser(req, res)) return;
-        const d = ownDefinition(req, res, req.params.id);
+        const d = await ownDefinition(req, res, req.params.id);
         if (!d) return;
-        const ep = store.definitions.ingestEndpoints(d);
-        const keys = store.definitions.keys(d.id).filter(k => k.status !== 'revoked');
-        const dests = store.outputs.destinations(d.id);
-        const sessions = store.sessions.list({ definition_id: d.id, limit: 15 });
-        const open = sessions.find(s => ['starting', 'live', 'ending'].includes(s.state));
-        const outputs = open ? store.outputs.outputsOfSession(open.id) : [];
-        const outFor = (destId) => outputs.find(o => o.destination_id === destId);
+        const ep = await store.definitions.ingestEndpoints(d);
+        const keys = (await store.definitions.keys(d.id)).filter(k => k.status !== 'revoked');
+        const dests = await store.outputs.destinations(d.id);
+        const sessions = await store.sessions.list({ definition_id: d.id, limit: 15 });
+        const open = await sessions.find(s => ['starting', 'live', 'ending'].includes(s.state));
+        const outputs = open ? await store.outputs.outputsOfSession(open.id) : [];
+        const outFor = async (destId) => await outputs.find(o => o.destination_id === destId);
         page(req, res, {
             title: d.title, canonicalPath: `/streams/${d.id}`,
             body: `<h1>${esc(d.title)} ${pill(d.state)}</h1>
@@ -164,14 +164,14 @@ ${form(req, `/streams/${d.id}/rotate`, `<div class="row"><div><label>Old key sta
 <div class="card"><h2>Now</h2>${open ? `<p>${pill(open.state)} since ${esc(iso(open.live_at || open.created_at))} on ${esc(open.worker_kind)} generation ${esc(open.worker_generation)} · <a href="/sessions/${esc(open.id)}">session</a></p>
 ${form(req, `/sessions/${open.id}/end`, '<button type="submit" class="danger">End session</button>', { cls: 'inline', confirm: 'Disconnect the encoder?' })}` : '<p class="muted">Offline.</p>'}</div>
 <div class="card"><h2>Restream destinations</h2>
-${dests.length ? `<table><tr><th>Destination</th><th>Output</th><th>Health</th><th>Actions</th></tr>${dests.map((x) => {
-                const o = outFor(x.id);
+${dests.length ? `<table><tr><th>Destination</th><th>Output</th><th>Health</th><th>Actions</th></tr>${(await Promise.all(dests.map(async (x) => {
+                const o = await outFor(x.id);
                 return `<tr><td><strong>${esc(x.name || x.platform)}</strong> <span class="muted">${esc(x.platform)}</span><br><span class="mono">${esc(x.server_url)}</span><br><span class="muted">key ${esc(x.stream_key_hint || 'not set')}${x.enabled ? '' : ' · disabled'}${x.auto_start ? ' · auto-start' : ''}${x.hold_reason ? ` · held: ${esc(x.hold_reason)}` : ''}${x.cooldown_ms ? ` · cooling down until ${esc(x.cooldown_until)}` : ''}</span></td>
 <td>${o ? pill(o.state) : '<span class="muted">—</span>'}</td>
 <td>${o && o.progress ? `${esc(o.progress.fps ?? '?')} fps · ${esc(o.progress.bitrate_kbps ?? '?')} kbit/s · speed ${esc(o.progress.speed ?? '?')}` : ''}${o && o.last_error ? `<br><span class="muted">${esc(o.last_error)}</span>` : ''}${!o && x.last_error ? `<span class="muted">${esc(x.last_error)}</span>` : ''}</td>
 <td>${form(req, `/destinations/${x.id}/test`, '<button type="submit" class="secondary">Test</button>', { cls: 'inline' })}${open ? (o && ['pending', 'starting', 'live', 'error'].includes(o.state) ? form(req, `/destinations/${x.id}/stop`, '<button type="submit" class="secondary">Stop</button>', { cls: 'inline' }) : form(req, `/destinations/${x.id}/start`, '<button type="submit">Start</button>', { cls: 'inline' })) : ''}
 <a href="/destinations/${esc(x.id)}">Edit</a>${form(req, `/destinations/${x.id}/delete`, '<button type="submit" class="danger">Delete</button>', { cls: 'inline', confirm: 'Delete this destination?' })}</td></tr>`;
-            }).join('')}</table>` : '<p class="muted">No destinations.</p>'}
+            }))).join('')}</table>` : '<p class="muted">No destinations.</p>'}
 <h3>Add a destination</h3>${form(req, `/streams/${d.id}/destinations`, destinationFields({}))}</div>
 <div class="card"><h2>Settings</h2>${form(req, `/streams/${d.id}`, `
 <label>Title</label><input type="text" name="title" maxlength="140" value="${esc(d.title)}">
@@ -215,35 +215,35 @@ ${dests.length ? `<table><tr><th>Destination</th><th>Output</th><th>Health</th><
         return `<table><tr><th>Session</th><th>State</th><th>Started</th><th>Ended</th><th>Worker</th></tr>${list.map(s => `<tr><td><a class="mono" href="/sessions/${esc(s.id)}">${esc(s.id)}</a></td><td>${pill(s.state)}${s.failure_reason ? ` <span class="muted">${esc(s.failure_reason)}</span>` : ''}</td><td>${esc(iso(s.live_at || s.created_at))}</td><td>${esc(iso(s.ended_at))}</td><td>${esc(s.worker_kind)} #${esc(s.worker_generation)}</td></tr>`).join('')}</table>`;
     }
 
-    post('/streams/:id', (req, res) => {
-        const d = ownDefinition(req, res, req.params.id);
+    post('/streams/:id', async (req, res) => {
+        const d = await ownDefinition(req, res, req.params.id);
         if (!d) return;
         const b = req.body || {};
-        store.definitions.update(d.id, { title: b.title, recording_mode: b.recording_mode, recording_visibility: b.recording_visibility, playback_visibility: b.playback_visibility, state: b.state, mirror_to_live: b.mirror_to_live === '1' });
+        await store.definitions.update(d.id, { title: b.title, recording_mode: b.recording_mode, recording_visibility: b.recording_visibility, playback_visibility: b.playback_visibility, state: b.state, mirror_to_live: b.mirror_to_live === '1' });
         res.redirect(303, `/streams/${d.id}`);
     });
 
-    post('/streams/:id/rotate', (req, res) => {
-        const d = ownDefinition(req, res, req.params.id);
+    post('/streams/:id/rotate', async (req, res) => {
+        const d = await ownDefinition(req, res, req.params.id);
         if (!d) return;
-        const r = store.definitions.rotateKey(d.id, { grace_seconds: Number(req.body.grace_seconds) || 0, rotated_by: req.caller.subject });
-        if (req.body.end_sessions === '1') for (const s of store.sessions.openFor(d.id)) store.sessions.requestEnd(s.id, `key_rotation:${req.caller.subject}`);
-        keyPage(req, res, store.definitions.get(d.id), r.key, 'New ingest key');
+        const r = await store.definitions.rotateKey(d.id, { grace_seconds: Number(req.body.grace_seconds) || 0, rotated_by: req.caller.subject });
+        if (req.body.end_sessions === '1') for (const s of await store.sessions.openFor(d.id)) await store.sessions.requestEnd(s.id, `key_rotation:${req.caller.subject}`);
+        await keyPage(req, res, await store.definitions.get(d.id), r.key, 'New ingest key');
     });
 
-    post('/streams/:id/destinations', (req, res) => {
-        const d = ownDefinition(req, res, req.params.id);
+    post('/streams/:id/destinations', async (req, res) => {
+        const d = await ownDefinition(req, res, req.params.id);
         if (!d) return;
-        store.outputs.createDestination(d.id, destInput(req.body || {}, { editing: false }));
+        await store.outputs.createDestination(d.id, destInput(req.body || {}, { editing: false }));
         res.redirect(303, `/streams/${d.id}`);
     });
 
-    router.get('/destinations/:id', (req, res) => {
+    router.get('/destinations/:id', async (req, res) => {
         if (!needUser(req, res)) return;
-        const own = ownDestination(req, res, req.params.id);
+        const own = await ownDestination(req, res, req.params.id);
         if (!own) return;
         const x = store.outputs.publicDest(own.dest);
-        const logs = store.outputs.logsOfDestination(x.id, 50);
+        const logs = await store.outputs.logsOfDestination(x.id, 50);
         page(req, res, {
             title: `Destination ${x.name || x.platform}`, canonicalPath: `/destinations/${x.id}`,
             body: `<h1>${esc(x.name || x.platform)}</h1><p><a href="/streams/${esc(own.definition.id)}">← ${esc(own.definition.title)}</a></p>
@@ -252,25 +252,25 @@ ${dests.length ? `<table><tr><th>Destination</th><th>Output</th><th>Health</th><
         });
     });
 
-    post('/destinations/:id', (req, res) => {
-        const own = ownDestination(req, res, req.params.id);
+    post('/destinations/:id', async (req, res) => {
+        const own = await ownDestination(req, res, req.params.id);
         if (!own) return;
-        store.outputs.updateDestination(own.dest.id, destInput(req.body || {}, { editing: true }));
+        await store.outputs.updateDestination(own.dest.id, destInput(req.body || {}, { editing: true }));
         res.redirect(303, `/streams/${own.definition.id}`);
     });
 
-    post('/destinations/:id/delete', (req, res) => {
-        const own = ownDestination(req, res, req.params.id);
+    post('/destinations/:id/delete', async (req, res) => {
+        const own = await ownDestination(req, res, req.params.id);
         if (!own) return;
-        store.outputs.deleteDestination(own.dest.id);
+        await store.outputs.deleteDestination(own.dest.id);
         res.redirect(303, `/streams/${own.definition.id}`);
     });
 
     post('/destinations/:id/test', async (req, res) => {
-        const own = ownDestination(req, res, req.params.id);
+        const own = await ownDestination(req, res, req.params.id);
         if (!own) return;
         const result = await testDestination(own.dest, { allowPrivate: config.outputs.allowPrivateHosts });
-        store.outputs.log(null, own.dest.id, result.ok ? 'info' : 'warn', `test ${result.ok ? 'passed' : 'failed'}: ${result.checks.map(c => `${c.check} ${c.ok ? 'ok' : 'FAIL'} (${c.detail})`).join('; ')}`);
+        await store.outputs.log(null, own.dest.id, result.ok ? 'info' : 'warn', `test ${result.ok ? 'passed' : 'failed'}: ${result.checks.map(c => `${c.check} ${c.ok ? 'ok' : 'FAIL'} (${c.detail})`).join('; ')}`);
         page(req, res, {
             title: 'Destination test',
             body: `<h1>Test ${result.ok ? pill('ok') : pill('failed')}</h1><table>${result.checks.map(c => `<tr><td>${esc(c.check)}</td><td>${c.ok ? pill('ok') : pill('failed')}</td><td>${esc(c.detail)}</td></tr>`).join('')}</table>
@@ -278,34 +278,34 @@ ${dests.length ? `<table><tr><th>Destination</th><th>Output</th><th>Health</th><
         });
     });
 
-    post('/destinations/:id/start', (req, res) => {
-        const own = ownDestination(req, res, req.params.id);
+    post('/destinations/:id/start', async (req, res) => {
+        const own = await ownDestination(req, res, req.params.id);
         if (!own) return;
-        store.outputs.startDestination(own.dest.id);
+        await store.outputs.startDestination(own.dest.id);
         res.redirect(303, `/streams/${own.definition.id}`);
     });
 
-    post('/destinations/:id/stop', (req, res) => {
-        const own = ownDestination(req, res, req.params.id);
+    post('/destinations/:id/stop', async (req, res) => {
+        const own = await ownDestination(req, res, req.params.id);
         if (!own) return;
-        store.outputs.stopDestination(own.dest.id);
+        await store.outputs.stopDestination(own.dest.id);
         res.redirect(303, `/streams/${own.definition.id}`);
     });
 
-    router.get('/sessions', (req, res) => {
+    router.get('/sessions', async (req, res) => {
         if (!needUser(req, res)) return;
         const all = req.caller.staff && req.query.all === '1';
-        page(req, res, { title: 'Sessions', canonicalPath: '/sessions', body: `<h1>Sessions</h1>${req.caller.staff ? `<p class="muted"><a href="/sessions${all ? '' : '?all=1'}">${all ? 'Only mine' : 'Everyone (staff)'}</a></p>` : ''}${sessionTable(store.sessions.list({ owner_subject: all ? undefined : req.caller.subject, limit: 100 }))}` });
+        page(req, res, { title: 'Sessions', canonicalPath: '/sessions', body: `<h1>Sessions</h1>${req.caller.staff ? `<p class="muted"><a href="/sessions${all ? '' : '?all=1'}">${all ? 'Only mine' : 'Everyone (staff)'}</a></p>` : ''}${sessionTable(await store.sessions.list({ owner_subject: all ? undefined : req.caller.subject, limit: 100 }))}` });
     });
 
-    router.get('/sessions/:id', (req, res) => {
+    router.get('/sessions/:id', async (req, res) => {
         if (!needUser(req, res)) return;
-        const s = store.sessions.get(req.params.id);
-        const d = s ? store.definitions.row(s.definition_id) : null;
+        const s = await store.sessions.get(req.params.id);
+        const d = s ? await store.definitions.row(s.definition_id) : null;
         if (!s || !d || !auth.canAccess(req.caller, d.owner_subject)) return page(req, res, { title: 'Not found', body: '<h1>Session not found</h1>' }, 404);
-        const outputs = store.outputs.outputsOfSession(s.id);
-        const rec = store.recordings.bySession(s.id);
-        const pb = store.sessions.playback(s);
+        const outputs = await store.outputs.outputsOfSession(s.id);
+        const rec = await store.recordings.bySession(s.id);
+        const pb = await store.sessions.playback(s);
         const open = ['starting', 'live', 'ending'].includes(s.state);
         return page(req, res, {
             title: `Session ${s.id}`, canonicalPath: `/sessions/${s.id}`,
@@ -318,16 +318,16 @@ ${dests.length ? `<table><tr><th>Destination</th><th>Output</th><th>Health</th><
 <tr><th>Recording</th><td>${rec ? `${pill(rec.state)} ${rec.media_vod_id ? `Media ${esc(rec.media_app)} VOD ${esc(rec.media_vod_id)}` : ''} ${esc(rec.last_error || '')}` : '<span class="muted">none</span>'}</td></tr>
 <tr><th>Playback</th><td>${pb && pb.flv && s.state === 'live' ? `<a class="mono" href="${esc(pb.flv.public_url)}">${esc(pb.flv.public_url)}</a> (HTTP-FLV)` : '—'}</td></tr>
 </table>${open ? form(req, `/sessions/${s.id}/end`, '<button type="submit" class="danger">End session</button>', { confirm: 'Disconnect the encoder?' }) : ''}</div>
-<h2>Outputs</h2>${outputs.length ? `<table><tr><th>Output</th><th>State</th><th>Health</th><th>Restarts</th></tr>${outputs.map(o => `<tr><td class="mono">${esc(o.id)}<br><span class="muted">${esc(o.destination_id)}</span></td><td>${pill(o.state)}</td><td>${o.progress ? `${esc(o.progress.fps ?? '?')} fps · ${esc(o.progress.bitrate_kbps ?? '?')} kbit/s` : ''} ${esc(o.last_error || '')}</td><td>${esc(o.restart_attempts)}/${esc(o.max_restart_attempts)}</td></tr>`).join('')}</table>` : '<p class="muted">No outputs.</p>'}
-<h2>Lifecycle</h2><table>${store.sessions.transitions(s.id).map(t => `<tr><td>${esc(iso(t.at))}</td><td>${esc(t.from_state || '·')} → ${pill(t.to_state)}</td><td>${esc(t.reason || '')}</td><td class="mono muted">${esc(t.actor || '')}</td></tr>`).join('')}</table>`,
+<h2>Outputs</h2>${outputs.length ? `<table><tr><th>Output</th><th>State</th><th>Health</th><th>Restarts</th></tr>${(await outputs.map(o => `<tr><td class="mono">${esc(o.id)}<br><span class="muted">${esc(o.destination_id)}</span></td><td>${pill(o.state)}</td><td>${o.progress ? `${esc(o.progress.fps ?? '?')} fps · ${esc(o.progress.bitrate_kbps ?? '?')} kbit/s` : ''} ${esc(o.last_error || '')}</td><td>${esc(o.restart_attempts)}/${esc(o.max_restart_attempts)}</td></tr>`)).join('')}</table>` : '<p class="muted">No outputs.</p>'}
+<h2>Lifecycle</h2><table>${(await store.sessions.transitions(s.id)).map(t => `<tr><td>${esc(iso(t.at))}</td><td>${esc(t.from_state || '·')} → ${pill(t.to_state)}</td><td>${esc(t.reason || '')}</td><td class="mono muted">${esc(t.actor || '')}</td></tr>`).join('')}</table>`,
         });
     });
 
-    post('/sessions/:id/end', (req, res) => {
-        const s = store.sessions.get(req.params.id);
-        const d = s ? store.definitions.row(s.definition_id) : null;
+    post('/sessions/:id/end', async (req, res) => {
+        const s = await store.sessions.get(req.params.id);
+        const d = s ? await store.definitions.row(s.definition_id) : null;
         if (!s || !d || !auth.canAccess(req.caller, d.owner_subject)) return page(req, res, { title: 'Not found', body: '<h1>Session not found</h1>' }, 404);
-        store.sessions.requestEnd(s.id, req.caller.subject);
+        await store.sessions.requestEnd(s.id, req.caller.subject);
         return res.redirect(303, `/sessions/${s.id}`);
     });
 

@@ -11,9 +11,16 @@
     "rtmp-ingest": "node workers/rtmp-ingest.js",
     "restream-worker": "node workers/restream-worker.js",
     "migrate-from-live": "node scripts/migrate-from-live.js",
-    "test": "node test/run.js"
+    "test": "node test/run.js",
+    "test:pg": "OPENRE_TEST_STORE=pg node test/run.js"
   },
-  "keywords": ["openvibe", "openre", "rtmp", "restream", "ingest"],
+  "keywords": [
+    "openvibe",
+    "openre",
+    "rtmp",
+    "restream",
+    "ingest"
+  ],
   "author": "OpenVibers",
   "license": "AGPL-3.0-only",
   "repository": "github:OpenVibers/OpenRe.Stream",
@@ -22,12 +29,17 @@
     "cookie-parser": "^1.4.7",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "iovalkey": "^0.4.0",
     "node-media-server": "2.7.4",
-    "openvibe-contracts": "https://codeload.github.com/OpenVibers/OpenVibe.Contracts/tar.gz/refs/tags/v0.49.0",
-    "openvibe-sdk": "https://codeload.github.com/OpenVibers/OpenVibe.SDK/tar.gz/refs/tags/v0.12.0",
-    "openvibe-shared": "https://codeload.github.com/OpenVibers/OpenVibe.Shared/tar.gz/refs/tags/v1.25.0"
+    "openvibe-contracts": "https://codeload.github.com/OpenVibers/OpenVibe.Contracts/tar.gz/refs/tags/v0.76.0",
+    "openvibe-sdk": "https://codeload.github.com/OpenVibers/OpenVibe.SDK/tar.gz/refs/tags/v0.21.3",
+    "openvibe-shared": "https://codeload.github.com/OpenVibers/OpenVibe.Shared/tar.gz/refs/tags/v1.28.0",
+    "pg": "^8.23.0"
   },
   "engines": {
     "node": ">=22.12.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8"
   }
 }

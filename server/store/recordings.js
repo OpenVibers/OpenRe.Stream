@@ -38,23 +38,23 @@ function createRecordings({ db, config, events, clock, definitions, sessions, lo
         set: (cols) => db.prepare(`UPDATE recordings SET ${cols.map(c => `${c} = @${c}`).join(', ')}, updated_at = @now WHERE id = @id`),
     };
 
-    function update(id, fields) {
-        q.set(Object.keys(fields)).run({ ...fields, id, now: now() });
-        return q.get.get(id);
+    async function update(id, fields) {
+        await q.set(Object.keys(fields)).run({ ...fields, id, now: now() });
+        return await q.get.get(id);
     }
 
-    function ensureRequests() {
-        const rows = q.missing.all(now() - config.media.startDelayMs);
-        for (const r of rows) q.insert.run(newId('recording', now()), r.session_id, r.mode, config.media.appId, now(), now());
+    async function ensureRequests() {
+        const rows = await q.missing.all(now() - config.media.startDelayMs);
+        for (const r of rows) await q.insert.run(newId('recording', now()), r.session_id, r.mode, config.media.appId, now(), now());
         return rows.length;
     }
 
-    function retryLater(rec, err, { disk = false } = {}) {
+    async function retryLater(rec, err, { disk = false } = {}) {
         const attempts = rec.attempts + 1;
         const limit = disk ? DISK_MAX_ATTEMPTS : MAX_ATTEMPTS;
-        if (attempts >= limit) return update(rec.id, { attempts, state: 'failed', last_error: String(err.message || err).slice(0, 300) });
+        if (attempts >= limit) return await update(rec.id, { attempts, state: 'failed', last_error: String(err.message || err).slice(0, 300) });
         const wait = disk ? DISK_RETRY_MS : BACKOFF_MS[Math.min(attempts - 1, BACKOFF_MS.length - 1)];
-        return update(rec.id, { attempts, next_attempt_at: now() + wait, last_error: String(err.message || err).slice(0, 300) });
+        return await update(rec.id, { attempts, next_attempt_at: now() + wait, last_error: String(err.message || err).slice(0, 300) });
     }
 
     function refOf(definition, service, type) {
@@ -63,15 +63,15 @@ function createRecordings({ db, config, events, clock, definitions, sessions, lo
     }
 
     async function step(rec, media) {
-        const session = sessions.get(rec.session_id);
-        if (!session) return update(rec.id, { state: 'failed', last_error: 'session missing' });
-        const definition = definitions.row(session.definition_id);
+        const session = await sessions.get(rec.session_id);
+        if (!session) return await update(rec.id, { state: 'failed', last_error: 'session missing' });
+        const definition = await definitions.row(session.definition_id);
         const ended = isTerminal(session.state) || session.state === 'ending';
 
         if (rec.state === 'pending') {
-            if (ended) return update(rec.id, { state: 'cancelled' });
-            const pb = sessions.playback(session);
-            if (!pb || !pb.rtmp) return retryLater(rec, new Error('no loopback play URL for this session yet'));
+            if (ended) return await update(rec.id, { state: 'cancelled' });
+            const pb = await sessions.playback(session);
+            if (!pb || !pb.rtmp) return await retryLater(rec, new Error('no loopback play URL for this session yet'));
             let vodId = rec.media_vod_id;
             try {
                 if (!vodId) {
@@ -88,7 +88,7 @@ function createRecordings({ db, config, events, clock, definitions, sessions, lo
                         meta: { source: 'openre', openre_session_id: session.id, openre_stream_id: definition.id, protocol: session.protocol, mode: rec.mode },
                     });
                     vodId = String(out && out.id);
-                    rec = update(rec.id, { media_vod_id: vodId, state: 'requested' });
+                    rec = await update(rec.id, { media_vod_id: vodId, state: 'requested' });
                 }
                 await media.ingestRtmp(vodId, pb.rtmp.internal_url);
             } catch (err) {
@@ -96,12 +96,12 @@ function createRecordings({ db, config, events, clock, definitions, sessions, lo
                 // Media may have made the VOD row before the ingest was refused (disk low): drop the
                 // empty shell so it never shows as a 0:00 VOD, and start over next time.
                 if (vodId) await media.deleteVod(vodId).catch(() => {});
-                update(rec.id, { media_vod_id: null, state: 'pending' });
-                return retryLater(q.get.get(rec.id), err, { disk: /disk/i.test(String(err.message)) });
+                await update(rec.id, { media_vod_id: null, state: 'pending' });
+                return await retryLater(await q.get.get(rec.id), err, { disk: /disk/i.test(String(err.message)) });
             }
-            return db.transaction(() => {
-                const r = update(rec.id, { state: 'recording', attempts: 0, last_error: null, next_attempt_at: 0 });
-                events.enqueue({
+            return await db.tx(async () => {
+                const r = await update(rec.id, { state: 'recording', attempts: 0, last_error: null, next_attempt_at: 0 });
+                await events.enqueue({
                     event_type: TYPES.recordingRequested,
                     actor: { type: 'service', id: 'openre' },
                     subject: { type: 'recording', id: rec.id, revision: 1 },
@@ -118,25 +118,25 @@ function createRecordings({ db, config, events, clock, definitions, sessions, lo
                     },
                 });
                 return r;
-            })();
+            });
         }
 
         if (rec.state === 'requested') {
             // A create that succeeded and an ingest that did not: handled above; a requested row
             // here means the process died in between. Start the ingest again.
-            return update(rec.id, { state: 'pending' });
+            return await update(rec.id, { state: 'pending' });
         }
 
-        if (rec.state === 'recording' && ended) rec = update(rec.id, { state: 'finalizing' });
+        if (rec.state === 'recording' && ended) rec = await update(rec.id, { state: 'finalizing' });
         if (rec.state === 'finalizing') {
             try {
                 await media.finalizeVod(rec.media_vod_id);
                 if (rec.mode === 'clips') await media.deleteVod(rec.media_vod_id).catch(() => {});
             } catch (err) {
                 // 409 = Media already finalising it (its ffmpeg saw the source end): that is success.
-                if (err.status !== 409) return retryLater(rec, err);
+                if (err.status !== 409) return await retryLater(rec, err);
             }
-            return update(rec.id, { state: 'finalized', last_error: null });
+            return await update(rec.id, { state: 'finalized', last_error: null });
         }
         return rec;
     }
@@ -145,7 +145,7 @@ function createRecordings({ db, config, events, clock, definitions, sessions, lo
     async function process(media) {
         if (!media.configured) return 0;
         let n = 0;
-        for (const rec of q.due.all(now())) {
+        for (const rec of await q.due.all(now())) {
             try { await step(rec, media); n++; } catch (err) { log.error(`[recording] ${rec.id}: ${err.stack || err}`); }
         }
         return n;
@@ -154,7 +154,7 @@ function createRecordings({ db, config, events, clock, definitions, sessions, lo
     return {
         ensureRequests,
         process,
-        bySession: (sessionId) => q.bySession.get(sessionId) || null,
+        bySession: async (sessionId) => await q.bySession.get(sessionId) || null,
     };
 }
 

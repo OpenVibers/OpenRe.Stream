@@ -56,10 +56,10 @@ function createMediaClient({ config, fetchImpl = globalThis.fetch }) {
     return {
         configured,
         appId: config.media.appId,
-        createVod: (fields) => request('POST', '/vods', { body: fields }),
-        ingestRtmp: (vodId, rtmpUrl) => request('POST', `/vods/${encodeURIComponent(vodId)}/ingest/rtmp`, { body: { rtmp_url: rtmpUrl } }),
-        finalizeVod: (vodId) => request('POST', `/vods/${encodeURIComponent(vodId)}/finalize`, { timeoutMs: 30000 }),
-        deleteVod: (vodId) => request('DELETE', `/vods/${encodeURIComponent(vodId)}`),
+        createVod: async (fields) => await request('POST', '/vods', { body: fields }),
+        ingestRtmp: async (vodId, rtmpUrl) => await request('POST', `/vods/${encodeURIComponent(vodId)}/ingest/rtmp`, { body: { rtmp_url: rtmpUrl } }),
+        finalizeVod: async (vodId) => await request('POST', `/vods/${encodeURIComponent(vodId)}/finalize`, { timeoutMs: 30000 }),
+        deleteVod: async (vodId) => await request('DELETE', `/vods/${encodeURIComponent(vodId)}`),
     };
 }
 

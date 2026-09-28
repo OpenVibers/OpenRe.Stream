@@ -33,59 +33,59 @@ function createCoordinator({ rt, media, lineage = null, log = console, holder = 
     let ticking = null;
     const stats = { ticks: 0, lastTickAt: null, lastError: null, holdsLease: false };
 
-    function takeLease() {
-        const ok = lease.take.run({ holder, exp: now() + config.workers.leaseMs, now: now() }).changes > 0;
+    async function takeLease() {
+        const ok = (await lease.take.run({ holder, exp: now() + config.workers.leaseMs, now: now() })).changes > 0;
         stats.holdsLease = ok;
         return ok;
     }
 
-    function failSessionsOf(worker, reason) {
+    async function failSessionsOf(worker, reason) {
         let n = 0;
-        for (const s of store.sessions.ofWorker(worker.id)) {
-            const r = store.sessions.transition(s.id, 'failed', { reason, actor: 'coordinator' });
+        for (const s of await store.sessions.ofWorker(worker.id)) {
+            const r = await store.sessions.transition(s.id, 'failed', { reason, actor: 'coordinator' });
             if (r.ok) n++;
         }
         return n;
     }
 
     /** The synchronous part of a tick (everything but Media calls and the relay). */
-    function syncTick() {
+    async function syncTick() {
         const out = { lost: 0, failed: 0, drained: 0, outputsCreated: 0, outputsAssigned: 0, keysRevoked: 0, recordingsCreated: 0 };
         // 2. liveness
-        for (const w of store.workers.stale(now() - config.workers.leaseMs)) {
-            if (store.workers.lose(w.id, 'heartbeat_missed')) {
+        for (const w of await store.workers.stale(now() - config.workers.leaseMs)) {
+            if (await store.workers.lose(w.id, 'heartbeat_missed')) {
                 out.lost++;
-                out.failed += failSessionsOf(w, 'worker_lost');
-                store.outputs.release(w.id);
+                out.failed += await failSessionsOf(w, 'worker_lost');
+                await store.outputs.release(w.id);
                 log.warn(`[coordinator] worker ${w.kind}#${w.generation} (${w.id}) lost; sessions failed, outputs released`);
             }
         }
         // 3. orphans (lease expired, worker not alive)
-        for (const s of store.sessions.expiredLeases()) {
-            const w = s.worker_id ? store.workers.get(s.worker_id) : null;
+        for (const s of await store.sessions.expiredLeases()) {
+            const w = s.worker_id ? await store.workers.get(s.worker_id) : null;
             if (w && ['starting', 'ready', 'draining'].includes(w.state) && w.heartbeat_at >= now() - config.workers.leaseMs) continue;
-            if (store.sessions.transition(s.id, 'failed', { reason: 'lease_expired', actor: 'coordinator' }).ok) out.failed++;
+            if ((await store.sessions.transition(s.id, 'failed', { reason: 'lease_expired', actor: 'coordinator' })).ok) out.failed++;
         }
         // 4. generations
         for (const kind of KINDS) {
-            const newest = store.workers.newestReady(kind);
+            const newest = await store.workers.newestReady(kind);
             if (!newest) continue;
-            for (const old of store.workers.olderReady(kind, newest.generation)) {
-                if (store.workers.drain(old.id, now() + config.workers.drainMaxMs)) {
+            for (const old of await store.workers.olderReady(kind, newest.generation)) {
+                if (await store.workers.drain(old.id, now() + config.workers.drainMaxMs)) {
                     out.drained++;
                     log.log(`[coordinator] ${kind}#${old.generation} drains (newest ready is #${newest.generation})`);
                 }
             }
         }
         // 5. outputs
-        out.outputsCreated = store.outputs.ensureAutoOutputs();
-        const restream = store.workers.newestReady('restream');
-        if (restream) out.outputsAssigned = store.outputs.assignPending(restream);
-        store.outputs.stopOrphans();
+        out.outputsCreated = await store.outputs.ensureAutoOutputs();
+        const restream = await store.workers.newestReady('restream');
+        if (restream) out.outputsAssigned = await store.outputs.assignPending(restream);
+        await store.outputs.stopOrphans();
         // 6. keys
-        out.keysRevoked = store.definitions.expireGraceKeys();
+        out.keysRevoked = await store.definitions.expireGraceKeys();
         // 7. recordings (requests only; the Media calls are async below)
-        if (media && media.configured) out.recordingsCreated = store.recordings.ensureRequests();
+        if (media && media.configured) out.recordingsCreated = await store.recordings.ensureRequests();
         return out;
     }
 
@@ -93,8 +93,8 @@ function createCoordinator({ rt, media, lineage = null, log = console, holder = 
         if (ticking) return ticking;
         ticking = (async () => {
             try {
-                if (!takeLease()) return { skipped: 'lease held by another coordinator' };
-                const out = syncTick();
+                if (!await takeLease()) return { skipped: 'lease held by another coordinator' };
+                const out = await syncTick();
                 if (media) out.recordingSteps = await store.recordings.process(media);
                 if (lineage) out.lineage = await lineage.refresh();
                 stats.ticks++;
@@ -124,7 +124,7 @@ function createCoordinator({ rt, media, lineage = null, log = console, holder = 
             clearTimeout(timer);
             if (ticking) await ticking.catch(() => {});
             await rt.events.stop();
-            lease.release.run(holder);
+            await lease.release.run(holder);
         },
         stats: () => ({ ...stats, lineage: lineage ? lineage.stats() : null }),
     };

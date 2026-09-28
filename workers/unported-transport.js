@@ -24,23 +24,23 @@ function createUnportedTransport({ rt, kind, log = console, exit = (code) => pro
     const runtime = createWorkerRuntime({ rt, kind, log, exit, hooks: { activeCount: () => 0 } });
     return {
         runtime,
-        start() {
-            runtime.register({ ported: false, note: PORT_STATUS[kind] });
-            runtime.ready();
+        async start() {
+            await runtime.register({ ported: false, note: PORT_STATUS[kind] });
+            await runtime.ready();
             log.log(`[${kind}] registered generation ${runtime.me.generation}: ${PORT_STATUS[kind]}`);
             return runtime.me;
         },
-        drain: (reason) => runtime.drainNow(reason),
+        drain: async (reason) => await runtime.drainNow(reason),
     };
 }
 
-function main(kind) {
+async function main(kind) {
     require('dotenv').config({ path: process.env.OPENRE_ENV_FILE || path.join(process.cwd(), '.env') });
     const { load, exitIfDrill } = require('../server/config');
     const { openRuntime } = require('../server/store');
     const config = load();
     exitIfDrill(config, `openre-${kind}`);
-    const w = createUnportedTransport({ rt: openRuntime({ config }), kind });
+    const w = createUnportedTransport({ rt: await openRuntime({ config }), kind });
     w.start();
     for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => w.drain(sig));
 }

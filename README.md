@@ -32,7 +32,8 @@ The ingest/restream control plane and runtime extracted from OpenVibe.Live. Live
 - OpenVibe.Network (JWKS for service tokens and user JWTs; OAuth client `openre`; client-credentials tokens for Events/Media)
 - OpenVibe.Events (event relay; optional: rows wait in the outbox)
 - OpenVibe.Media (recording requests; optional: sessions work without it)
-- OpenVibe.Contracts v0.49.0 (ids, problem+json, capability checks), OpenVibe.SDK v0.12.0 (outbox, token client, per-actor limits), OpenVibe.Shared v1.25.0 (chrome, readiness), pinned by release tarball
+- OpenVibe.Contracts v0.76.0 (ids, problem+json, capability checks), OpenVibe.SDK v0.21.3 (`db`, PostgreSQL outbox, token client, per-actor limits), OpenVibe.Shared v1.28.0 (Frame, readiness), pinned by release tarball
+- **PostgreSQL 18 and Valkey 9** (OpenVibe.Host `roles/data/`, ADR-035): the store every OpenRe process shares, and the API's per-actor limit counters (optional)
 - OpenVibe.Live (`live.lineage.resolve`: which channel a Live-linked stream belongs to)
 - node-media-server 2.7.4 (the RTMP session code Live runs) and the system ffmpeg
 
@@ -53,7 +54,7 @@ The ingest/restream control plane and runtime extracted from OpenVibe.Live. Live
 ## Processes
 
 ```
-                ┌───────────────── one SQLite database (WAL), /var/lib/openre/openre.db ─────────────────┐
+                ┌───────────────── one PostgreSQL database, ov_openre (ADR-035), through PgBouncer ─────────────────┐
 openre-api (4500)            openre-session-coordinator        openre-rtmp-ingest@<release>      openre-restream-worker@<release>
  API + UI + /play proxy       leases, generations, drain,       0.0.0.0:1936 publish (reuseport)  one ffmpeg per output, pulls the
  definitions, keys,           output assignment, recording      127.0.0.1 play + HTTP-FLV         session's HTTP-FLV from its worker
@@ -64,7 +65,7 @@ openre-api (4500)            openre-session-coordinator        openre-rtmp-inges
 - **Generations.** Each worker process registers as generation N+1 of its kind. When a newer generation is `ready`, the coordinator marks older ones `draining` (deadline `OPENRE_DRAIN_MAX_MS`, default 24 h). A draining RTMP worker closes its public listener (the kernel sends new encoder connections to the new generation through the shared port) and keeps its publishers; a draining restream worker keeps its outputs. Idle → the process exits 0 by itself. At the deadline, remaining sessions are ended (encoders reconnect to the newest generation) and remaining outputs are handed over.
 - **Leases.** Every heartbeat (2 s) renews the worker and the lease of every session it owns in one transaction. A worker silent for `OPENRE_WORKER_LEASE_MS` (15 s) is `lost`: its sessions fail (`openre.session.failed`), its outputs go back to `pending` for another worker. A lost worker that wakes up drops its transports and exits.
 - **Isolation.** An output only ever changes its own row. A dead destination fails (`openre.output.failed`, destination cooldown 15 min → 24 h) and the session stays live (`test/rtmp-e2e.test.js`, `test/sessions.test.js`, `test/coordinator.test.js`).
-- **Store.** SQLite per ADR-007 (single host). Several writer processes is the trigger ADR-007 names for PostgreSQL; all SQL is in `server/store/*`, so that move replaces one layer. Redis/etcd are not used; leases live in the same database.
+- **Store.** PostgreSQL 18 through PgBouncer (`ov_openre` on the host's data role, ADR-035; schema in [migrations/](migrations/)), shared by every OpenRe process. Every transaction is SERIALIZABLE (`server/store/index.js`): an ingest worker admitting a publish and the coordinator failing a lost worker's session conflict, and PostgreSQL makes one of them retry, as SQLite's one writer ordered them. Admission is async, so the RTMP worker admits a publish before node-media-server's own publish handling runs. Valkey holds the API's per-actor limit counters. The one-time move is `scripts/migrate-to-postgres.js` (run by OpenVibe.Host `roles/data/switch-service.sh` with every OpenRe unit stopped); `/var/lib/openre/openre.db` stays read-only for 7 days as the rollback.
 
 ## Running it
 
@@ -124,7 +125,7 @@ The ids were proposed in [docs/capabilities-proposal/](docs/capabilities-proposa
 
 ## Events
 
-Written to `event_outbox` in the same SQLite transaction as the change (openvibe-sdk `createOutbox`); the coordinator's relay publishes them with OpenRe's service token. Envelopes validate against `events.event-envelope@1`; `visibility: internal`; no payload ever carries an ingest key or a destination key.
+Written to `event_outbox` in the same transaction as the change (openvibe-sdk `createPgOutbox`); the coordinator's relay publishes them with OpenRe's service token. Envelopes validate against `events.event-envelope@1`; `visibility: internal`; no payload ever carries an ingest key or a destination key.
 
 | Type | Subject | When |
 |---|---|---|
@@ -167,7 +168,7 @@ The switch to 1935: once Live no longer listens on 1935, set `OPENRE_RTMP_EXTRA_
 
 ## Deploying
 
-Layout: `/opt/openre.stream/repo` (the git clone releases are made from), `/opt/openre.stream/releases/<sha12>` (full checkouts with their own `node_modules`, owned by ubuntu), `current` → the release the API and coordinator run, env `/etc/openvibe/openre.env` (see [.env.example](.env.example)), store `/var/lib/openre/openre.db`, units in [deploy/systemd/](deploy/systemd/), nginx [deploy/nginx/openre.stream.conf](deploy/nginx/openre.stream.conf), script [deploy/scripts/deploy.sh](deploy/scripts/deploy.sh). The release and API phases run through `ovhost deploy openre` (OpenVibe.Host, strategy `release-layout`; roadmap WS-N task 11); the script is a thin wrapper that keeps the old subcommands:
+Layout: `/opt/openre.stream/repo` (the git clone releases are made from), `/opt/openre.stream/releases/<sha12>` (full checkouts with their own `node_modules`, owned by ubuntu), `current` → the release the API and coordinator run, env `/etc/openvibe/openre.env` (see [.env.example](.env.example)), store `ov_openre` on PostgreSQL (`sudo /opt/openvibe.host/roles/data/add-service.sh openre` writes its settings; the release migrates it at boot; the old SQLite file is `/var/lib/openre/openre.db`), units in [deploy/systemd/](deploy/systemd/), nginx [deploy/nginx/openre.stream.conf](deploy/nginx/openre.stream.conf), script [deploy/scripts/deploy.sh](deploy/scripts/deploy.sh). The release and API phases run through `ovhost deploy openre` (OpenVibe.Host, strategy `release-layout`; roadmap WS-N task 11); the script is a thin wrapper that keeps the old subcommands:
 
 ```bash
 sudo deploy/scripts/deploy.sh                       # ovhost deploy openre: release + api in one

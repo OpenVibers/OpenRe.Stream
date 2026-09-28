@@ -44,38 +44,38 @@ function createWorkers({ db, config, clock }) {
 
     const shape = (w) => (w ? { ...w, endpoints: parseJson(w.endpoints, {}) } : null);
 
-    function register({ kind, release = config.release, pid = process.pid, host = os.hostname(), endpoints = {} }) {
+    async function register({ kind, release = config.release, pid = process.pid, host = os.hostname(), endpoints = {} }) {
         if (!KINDS.includes(kind)) throw new Error(`unknown worker kind ${kind}`);
         const id = newId('worker', now());
-        db.transaction(() => {
-            const generation = q.maxGen.get(kind).g + 1;
-            q.insert.run({ id, kind, generation, release, pid, host, endpoints: JSON.stringify(endpoints), now: now() });
-        }).immediate();
-        return shape(q.get.get(id));
+        await db.tx(async () => {
+            const generation = (await q.maxGen.get(kind)).g + 1;
+            await q.insert.run({ id, kind, generation, release, pid, host, endpoints: JSON.stringify(endpoints), now: now() });
+        });
+        return shape(await q.get.get(id));
     }
 
     return {
         KINDS,
         register,
-        get: (id) => shape(q.get.get(id)),
-        ready: (id) => q.setReady.run(now(), now(), id).changes > 0,
-        setEndpoints: (id, endpoints) => q.setEndpoints.run(JSON.stringify(endpoints), id),
+        get: async (id) => shape(await q.get.get(id)),
+        ready: async (id) => (await q.setReady.run(now(), now(), id)).changes > 0,
+        setEndpoints: async (id, endpoints) => await q.setEndpoints.run(JSON.stringify(endpoints), id),
         /** Heartbeat + renew the leases of every session this worker owns, in one transaction. */
-        heartbeat(id) {
-            return db.transaction(() => {
-                const alive = q.heartbeat.run(now(), id).changes > 0;
-                if (alive) q.renewLeases.run(now() + config.workers.leaseMs, id);
-                return shape(q.get.get(id));
-            })();
+        async heartbeat(id) {
+            return await db.tx(async () => {
+                const alive = (await q.heartbeat.run(now(), id)).changes > 0;
+                if (alive) await q.renewLeases.run(now() + config.workers.leaseMs, id);
+                return shape(await q.get.get(id));
+            });
         },
-        drain: (id, deadline) => q.drain.run(now(), deadline, id).changes > 0,
-        stop: (id, reason) => q.stop.run(now(), reason || 'exit', id).changes > 0,
-        lose: (id, reason) => q.lose.run(now(), reason || 'lease_expired', id).changes > 0,
-        newestReady: (kind) => shape(q.newestReady.get(kind)),
-        stale: (before) => q.stale.all(before).map(shape),
-        olderReady: (kind, generation) => q.olderReady.all(kind, generation).map(shape),
-        alive: () => q.alive.all().map(shape),
-        recent: (limit = 50) => q.recent.all(limit).map(shape),
+        drain: async (id, deadline) => (await q.drain.run(now(), deadline, id)).changes > 0,
+        stop: async (id, reason) => (await q.stop.run(now(), reason || 'exit', id)).changes > 0,
+        lose: async (id, reason) => (await q.lose.run(now(), reason || 'lease_expired', id)).changes > 0,
+        newestReady: async (kind) => shape(await q.newestReady.get(kind)),
+        stale: async (before) => (await q.stale.all(before)).map(shape),
+        olderReady: async (kind, generation) => (await q.olderReady.all(kind, generation)).map(shape),
+        alive: async () => (await q.alive.all()).map(shape),
+        recent: async (limit = 50) => (await q.recent.all(limit)).map(shape),
     };
 }
 

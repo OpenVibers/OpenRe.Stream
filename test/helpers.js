@@ -2,6 +2,10 @@
 /**
  * Shared test fixtures: a generated Network signing key and token minting, temp databases, a
  * manual clock, runtime/API boot helpers, child-process helpers and a tiny sequential runner.
+ *
+ * Databases (ADR-035): one per test directory, migrated. npm test: PGlite in memory, so one process (a test that
+ * spawns OpenRe processes sharing it says it is skipped); npm run test:pg (OPENRE_TEST_STORE=pg): a schema of its own
+ * on the PostgreSQL + PgBouncer containers, whose URLs every spawned process of the directory gets.
  */
 const crypto = require('crypto');
 const fs = require('fs');
@@ -10,8 +14,10 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { serviceAuth } = require('openvibe-contracts');
+const { createTestDb } = require('openvibe-sdk/testing');
 const { load } = require('../server/config');
 const { openRuntime } = require('../server/store');
+const { MIGRATIONS } = require('../server/db');
 
 const ROOT = path.join(__dirname, '..');
 const ISSUER = 'https://openvibe.network';
@@ -53,10 +59,27 @@ function tmpDir() {
     return d;
 }
 
-function testEnv(dir, extra = {}) {
+const STORE = process.env.OPENRE_TEST_STORE === 'pg' ? 'pg' : 'pglite';
+const databases = new Map();
+
+/** The migrated database of a test directory; every runtime, API and spawned process of the directory shares it. */
+async function testDb(dir) {
+    if (!databases.has(dir)) databases.set(dir, createTestDb({ migrations: MIGRATIONS, store: STORE, service: 'openre' }));
+    return await databases.get(dir);
+}
+
+/** Several OpenRe processes on one database need PostgreSQL (PGlite is one process). */
+const multiProcess = () => STORE === 'pg';
+
+/** A handle the test keeps: a runtime's or an API's close() leaves it open for the next one on the directory. */
+const keepOpen = (db) => new Proxy(db, { get: (t, k) => (k === 'close' ? async () => {} : typeof t[k] === 'function' ? t[k].bind(t) : t[k]) });
+
+async function testEnv(dir, extra = {}) {
+    const t = await testDb(dir);
     return {
         NODE_ENV: 'test',
         PORT: '0',
+        ...(t.url ? { DATABASE_URL: t.url, DATABASE_DIRECT_URL: t.directUrl } : { OPENRE_PGLITE_DIR: path.join(dir, 'pglite') }),
         OPENRE_DB_PATH: path.join(dir, 'openre.db'),
         OPENRE_SECRETS_KEY: SECRETS_KEY,
         OV_NETWORK_PUBLIC_KEY: publicKey,
@@ -67,15 +90,15 @@ function testEnv(dir, extra = {}) {
 }
 
 /** A runtime on a temp database (no network). */
-function runtime({ env = {}, clock, dir = tmpDir(), fetchImpl } = {}) {
-    const config = load(testEnv(dir, env));
-    return { ...openRuntime({ config, clock, log: silent, fetchImpl }), dir };
+async function runtime({ env = {}, clock, dir = tmpDir(), fetchImpl } = {}) {
+    const config = load(await testEnv(dir, env));
+    return { ...await openRuntime({ config, clock, log: silent, fetchImpl, db: keepOpen((await testDb(dir)).db) }), dir };
 }
 
 async function bootApi({ env = {}, dir = tmpDir(), clock, fetchImpl } = {}) {
     const { start } = require('../server/index');
-    const config = load(testEnv(dir, env));
-    const h = await start({ config, clock, log: silent, fetchImpl });
+    const config = load(await testEnv(dir, env));
+    const h = await start({ config, clock, log: silent, fetchImpl, db: keepOpen((await testDb(dir)).db) });
     const base = `http://127.0.0.1:${h.server.address().port}`;
     return { ...h, base, dir };
 }
@@ -173,14 +196,14 @@ function suite(name) {
 }
 
 /** The event types in the outbox, in order. */
-function outboxTypes(db) {
-    return db.prepare('SELECT envelope FROM event_outbox ORDER BY id').all().map(r => JSON.parse(r.envelope).event_type);
+async function outboxTypes(db) {
+    return (await db.prepare('SELECT envelope FROM event_outbox ORDER BY id').all()).map(r => (typeof r.envelope === 'string' ? JSON.parse(r.envelope) : r.envelope).event_type);
 }
-function outboxEnvelopes(db) {
-    return db.prepare('SELECT envelope FROM event_outbox ORDER BY id').all().map(r => JSON.parse(r.envelope));
+async function outboxEnvelopes(db) {
+    return (await db.prepare('SELECT envelope FROM event_outbox ORDER BY id').all()).map(r => (typeof r.envelope === 'string' ? JSON.parse(r.envelope) : r.envelope));
 }
 
 module.exports = {
-    ROOT, ISSUER, privateKey, publicKey, SECRETS_KEY, OWNER, OTHER, silent, serviceToken, userToken, manualClock, tmpDir, testEnv,
+    ROOT, ISSUER, privateKey, publicKey, SECRETS_KEY, OWNER, OTHER, silent, serviceToken, userToken, manualClock, tmpDir, testEnv, testDb, multiProcess, keepOpen,
     runtime, bootApi, request, freePort, child, waitFor, sleep, hasFfmpeg, publish, rtmpSink, suite, outboxTypes, outboxEnvelopes,
 };

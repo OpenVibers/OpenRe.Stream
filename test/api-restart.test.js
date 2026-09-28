@@ -5,10 +5,14 @@
 // by the worker; a new API process starts and serves the same live session.
 const assert = require('assert');
 const path = require('path');
-const { tmpDir, testEnv, child, waitFor, request, userToken, freePort, sleep, suite, OWNER } = require('./helpers');
+const { tmpDir, testEnv, child, waitFor, request, userToken, freePort, sleep, suite, OWNER, multiProcess } = require('./helpers');
 const { load } = require('../server/config');
 const { openRuntime } = require('../server/store');
 
+if (!multiProcess()) {
+    console.log('api-restart: skipped (OpenRe processes sharing one database need PostgreSQL: npm run test:pg)');
+    process.exit(0);
+}
 const t = suite('api-restart');
 const dir = tmpDir();
 let env;
@@ -26,9 +30,9 @@ async function startApi() {
 }
 
 t('setup: API process + fake worker process holding a live session', async () => {
-    env = testEnv(dir, { PORT: String(await freePort()), OPENRE_WORKER_HEARTBEAT_MS: '200', OPENRE_WORKER_LEASE_MS: '1500' });
-    const rt = openRuntime({ config: load(env), log: { log() {}, warn() {}, error() {} } });
-    const { definition } = rt.store.definitions.create({ owner_subject: OWNER, title: 'Restart test' });
+    env = await testEnv(dir, { PORT: String(await freePort()), OPENRE_WORKER_HEARTBEAT_MS: '200', OPENRE_WORKER_LEASE_MS: '1500' });
+    const rt = await openRuntime({ config: load(env), log: { log() {}, warn() {}, error() {} } });
+    const { definition } = await rt.store.definitions.create({ owner_subject: OWNER, title: 'Restart test' });
     rt.db.close();
     api = await startApi();
     fake = child(path.join('test', 'fixtures', 'fake-worker.js'), { ...env, FAKE_STREAM_ID: definition.id });
@@ -39,18 +43,18 @@ t('setup: API process + fake worker process holding a live session', async () =>
 });
 
 t('stopping the API (SIGTERM) leaves the worker process and its session alone', async () => {
-    const rt = openRuntime({ config: load(env), log: { log() {}, warn() {}, error() {} } });
-    const leaseBefore = rt.store.sessions.get(sessionId).lease_expires_at;
+    const rt = await openRuntime({ config: load(env), log: { log() {}, warn() {}, error() {} } });
+    const leaseBefore = (await rt.store.sessions.get(sessionId)).lease_expires_at;
     api.proc.kill('SIGTERM');
     const exit = await api.proc.exited;
     assert.strictEqual(exit.code, 0, 'the API exits cleanly');
     // Longer than a lease: if anything depended on the API, the session would now be failing.
     await sleep(2500);
     assert.strictEqual(fake.exitCode, null, 'fake worker still running');
-    const s = rt.store.sessions.get(sessionId);
+    const s = await rt.store.sessions.get(sessionId);
     assert.strictEqual(s.state, 'live');
     assert.ok(s.lease_expires_at > leaseBefore, 'the worker kept renewing its lease while the API was down');
-    assert.strictEqual(rt.store.workers.get(workerId).state, 'ready');
+    assert.strictEqual((await rt.store.workers.get(workerId)).state, 'ready');
     rt.db.close();
 });
 

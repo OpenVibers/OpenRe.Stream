@@ -37,22 +37,22 @@ function createWorkerRuntime({ rt, kind, log = console, hooks = {}, exit = (code
     let deadlineHandled = false;
     let stopped = false;
 
-    function register(endpoints = {}) {
-        me = store.workers.register({ kind, endpoints });
+    async function register(endpoints = {}) {
+        me = await store.workers.register({ kind, endpoints });
         log.log(`[${kind}] registered ${me.id} generation ${me.generation} (release ${me.release})`);
         return me;
     }
 
-    function ready() {
-        store.workers.ready(me.id);
-        me = store.workers.get(me.id);
+    async function ready() {
+        await store.workers.ready(me.id);
+        me = await store.workers.get(me.id);
         schedule();
         return me;
     }
 
-    function beat() {
+    async function beat() {
         if (stopped || !me) return null;
-        const row = store.workers.heartbeat(me.id);
+        const row = await store.workers.heartbeat(me.id);
         me = row;
         if (!row) return null;
         if (row.state === 'lost') {
@@ -73,7 +73,7 @@ function createWorkerRuntime({ rt, kind, log = console, hooks = {}, exit = (code
             try { hooks.onDrainDeadline && hooks.onDrainDeadline(row); } catch (err) { log.error(`[${kind}] onDrainDeadline: ${err.message}`); }
         }
         if (hooks.onEndRequested) {
-            for (const s of store.sessions.endRequestsFor(me.id)) {
+            for (const s of await store.sessions.endRequestsFor(me.id)) {
                 try { hooks.onEndRequested(s); } catch (err) { log.error(`[${kind}] onEndRequested: ${err.message}`); }
             }
         }
@@ -87,20 +87,20 @@ function createWorkerRuntime({ rt, kind, log = console, hooks = {}, exit = (code
     function schedule() {
         clearTimeout(timer);
         if (stopped) return;
-        timer = setTimeout(() => {
-            try { beat(); } catch (err) { log.error(`[${kind}] heartbeat failed: ${err.message}`); }
+        timer = setTimeout(async () => {
+            try { await beat(); } catch (err) { log.error(`[${kind}] heartbeat failed: ${err.message}`); }
             schedule();
         }, config.workers.heartbeatMs);
     }
 
     /** SIGTERM: the operator (or systemd) asks this generation to go away → same as a drain. */
-    function drainNow(reason = 'signal') {
+    async function drainNow(reason = 'signal') {
         if (!me || stopped) return;
         if (!draining) {
-            store.workers.drain(me.id, Date.now() + config.workers.drainMaxMs);
+            await store.workers.drain(me.id, Date.now() + config.workers.drainMaxMs);
             log.log(`[${kind}] draining on ${reason}`);
         }
-        beat();
+        await beat();
     }
 
     function exitWhenIdle() {

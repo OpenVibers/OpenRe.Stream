@@ -57,6 +57,11 @@ function load(env = process.env) {
         trustProxy: env.TRUST_PROXY != null ? Number(env.TRUST_PROXY) : 2,
 
         // ── Store ───────────────────────────────────────────────
+        // PostgreSQL (ADR-035): DATABASE_URL serves through PgBouncer, DATABASE_DIRECT_URL (the owner) runs migrations/.
+        // Without DATABASE_URL, development and tests use an embedded PGlite database (OPENRE_PGLITE_DIR). dbPath: the
+        // SQLite file the one-time move reads (scripts/migrate-to-postgres.js).
+        db: { url: env.DATABASE_URL || '', directUrl: env.DATABASE_DIRECT_URL || '', pgliteDir: env.OPENRE_PGLITE_DIR || '' },
+        valkey: { url: env.VALKEY_URL || '', prefix: env.VALKEY_PREFIX || 'ov:openre:' },
         dbPath: env.OPENRE_DB_PATH || './data/openre.db',
 
         // ── Secrets ─────────────────────────────────────────────

@@ -72,8 +72,8 @@ t('forms need the CSRF token; creating a stream shows the key once', async () =>
     assert.strictEqual(created.status, 200);
     assert.strictEqual(created.headers.get('cache-control'), 'no-store');
     const key = /(ork_[A-Za-z0-9_-]{43})/.exec(created.text)[1];
-    const def = api.rt.store.definitions.list({ owner_subject: OWNER })[0];
-    assert.strictEqual(api.rt.store.definitions.resolveIngestKey(key, 'rtmp').definition.id, def.id);
+    const def = (await api.rt.store.definitions.list({ owner_subject: OWNER }))[0];
+    assert.strictEqual((await api.rt.store.definitions.resolveIngestKey(key, 'rtmp')).definition.id, def.id);
     const page = await request(api.base, 'GET', `/streams/${def.id}`, { cookie });
     assert.strictEqual(page.status, 200);
     assert.ok(!page.text.includes(key), 'the stream page never shows the key again');
@@ -91,7 +91,7 @@ t('forms need the CSRF token; creating a stream shows the key once', async () =>
     const rotated = await request(api.base, 'POST', `/streams/${def.id}/rotate`, { cookie, form: { grace_seconds: '0', _csrf: csrfFor(token) } });
     const key2 = /(ork_[A-Za-z0-9_-]{43})/.exec(rotated.text)[1];
     assert.notStrictEqual(key2, key);
-    assert.strictEqual(api.rt.store.definitions.resolveIngestKey(key, 'rtmp').error, 'revoked_key');
+    assert.strictEqual((await api.rt.store.definitions.resolveIngestKey(key, 'rtmp')).error, 'revoked_key');
     await api.close();
 });
 

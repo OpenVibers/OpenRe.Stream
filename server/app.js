@@ -22,7 +22,7 @@ function createApp({ rt, auth, keys, log = console, fetchImpl }) {
     // sessions by state, from openvibe-shared/metrics (mounted before every route).
     const metrics = require('openvibe-shared/metrics').instrument(app, { service: 'openre' });
     metrics.registry.gauge({ name: 'openre_sessions', help: 'Ingest sessions by state', labelNames: ['state'],
-        collect: () => db.prepare("SELECT state, count(*) AS n FROM ingest_sessions WHERE state IN ('starting','live') GROUP BY state").all().map((r) => ({ labels: { state: r.state }, value: r.n })) });
+        collect: async () => (await db.prepare("SELECT state, count(*) AS n FROM ingest_sessions WHERE state IN ('starting','live') GROUP BY state").all()).map((r) => ({ labels: { state: r.state }, value: r.n })) });
     app.use(contracts.http.middleware());
     // One W3C trace across services (openvibe-shared/trace): calls made while serving a request carry its traceparent.
     require('openvibe-shared/trace').install(app);
@@ -64,46 +64,50 @@ function createApp({ rt, auth, keys, log = console, fetchImpl }) {
     // serving reads, rather than failing it. The worker list, the lease and the outbox stay in the body for
     // scripts/cutover-preflight.js; a restore drill never publishes, so its relay check is skipped, never ok.
     const { createReadiness, skip } = require('openvibe-shared/ready');
-    const workerView = () => store.workers.alive().map(w => ({ kind: w.kind, generation: w.generation, state: w.state, heartbeat_age_ms: Date.now() - w.heartbeat_at }));
-    const leaseView = () => {
-        const l = db.prepare("SELECT holder, expires_at FROM leases WHERE name = 'coordinator'").get();
+    const workerView = async () => (await store.workers.alive()).map(w => ({ kind: w.kind, generation: w.generation, state: w.state, heartbeat_age_ms: Date.now() - w.heartbeat_at }));
+    const leaseView = async () => {
+        const l = await db.prepare("SELECT holder, expires_at FROM leases WHERE name = 'coordinator'").get();
         return l ? { holder: l.holder, lease_valid: l.expires_at > Date.now() } : null;
     };
+    // Valkey (ADR-035): the per-actor limit counters (optional: without VALKEY_URL they count in this process).
+    const valkey = config.valkey.url ? require('openvibe-sdk/valkey').createValkey({ url: config.valkey.url, prefix: config.valkey.prefix }) : null;
+    app.locals.valkey = valkey;
     const readiness = createReadiness({
         service: 'openre',
         release: release.release,
         checks: [
-            { name: 'db', required: true, description: 'SQLite answers a query', check: () => db.prepare('SELECT 1 AS ok').get().ok === 1 },
+            { name: 'db', required: true, description: 'SQLite answers a query', check: async () => (await db.prepare('SELECT 1 AS ok').get()).ok === 1 },
             { name: 'network_key', required: true, description: 'OpenVibe.Network RS256 key (sign-in and service tokens)', check: () => keys.loaded() || 'Network public key not loaded yet' },
             {
                 name: 'workers', required: false, description: 'a ready rtmp-ingest and restream worker',
-                check: () => {
-                    const alive = workerView();
+                check: async () => {
+                    const alive = await workerView();
                     const missing = WORKER_KINDS.filter(k => !alive.some(w => w.kind === k && w.state === 'ready'));
                     return missing.length ? `no ready ${missing.join(' or ')} worker` : { ok: true, detail: { ready: alive.filter(w => w.state === 'ready').map(w => `${w.kind}#${w.generation}`) } };
                 },
             },
-            { name: 'coordinator', required: false, description: 'the coordinator holds a valid lease', check: () => { const l = leaseView(); return (l && l.lease_valid) || 'no valid coordinator lease'; } },
+            { name: 'valkey', required: false, description: 'per-actor limit counters', check: async () => (valkey ? await valkey.ready() : skip('VALKEY_URL not set: limits count in this process')) },
+            { name: 'coordinator', required: false, description: 'the coordinator holds a valid lease', check: async () => { const l = await leaseView(); return (l && l.lease_valid) || 'no valid coordinator lease'; } },
             {
                 name: 'events_relay', required: false, description: 'durable events to OpenVibe.Events',
-                check: () => {
-                    const st = events.status();
+                check: async () => {
+                    const st = await events.status();
                     if (!st.configured) return config.drill ? skip('restore drill: never publishes') : 'relay off (EVENTS_URL or OV_OAUTH_CLIENT_SECRET unset): openre.* events wait in the outbox';
                     return { ok: true, detail: { pending: st.pending, rejected: st.rejected } };
                 },
             },
         ],
-        details: (body) => {
+        details: async (body) => {
             let workers = [];
             let coordinator = null;
-            try { workers = workerView(); coordinator = leaseView(); } catch { /* reported as empty */ }
+            try { workers = await workerView(); coordinator = await leaseView(); } catch { /* reported as empty */ }
             const dbOk = body.checks.db && body.checks.db.status === 'ok';
             return {
                 ...(config.drill ? { mode: 'drill' } : {}),
-                store: { engine: 'sqlite', path_configured: Boolean(config.dbPath) },
+                store: { engine: 'postgresql' },
                 workers,
                 coordinator,
-                events: dbOk ? events.status() : null,
+                events: dbOk ? await events.status() : null,
             };
         },
     });
@@ -112,17 +116,17 @@ function createApp({ rt, auth, keys, log = console, fetchImpl }) {
     const apiJson = express.json({ limit: '256kb', type: ['application/json', 'application/*+json'] });
     const v1 = createV1Router({ rt, auth });
     // Per-actor limits on a signed-in person's writes (server/api/actor-limits.js; roadmap WS-R task 4).
-    const actorLimits = require('./api/actor-limits').createOpenReActorLimits({ registry: metrics.registry });
+    const actorLimits = require('./api/actor-limits').createOpenReActorLimits({ registry: metrics.registry, valkey });
     app.use('/api/v1', apiJson, auth.middleware({ services: true }), actorLimits, v1.router);
 
     // Public HTTP-FLV playback of a live session, proxied from the worker that holds it. A viewer
     // deploy of this API interrupts viewers of this URL (they reconnect), never the ingest.
-    app.get('/play/:file', (req, res) => {
+    app.get('/play/:file', async (req, res) => {
         const m = SESSION_FLV_RE.exec(req.params.file);
-        const s = m ? store.sessions.get(m[1]) : null;
-        const d = s ? store.definitions.row(s.definition_id) : null;
+        const s = m ? await store.sessions.get(m[1]) : null;
+        const d = s ? await store.definitions.row(s.definition_id) : null;
         if (!s || !d || s.state !== 'live' || d.playback_visibility === 'private') return res.status(404).end();
-        const pb = store.sessions.playback(s);
+        const pb = await store.sessions.playback(s);
         if (!pb || !pb.flv) return res.status(404).end();
         const upstream = http.get(pb.flv.internal_url, (up) => {
             if (up.statusCode !== 200) { res.status(502).end(); up.resume(); return; }

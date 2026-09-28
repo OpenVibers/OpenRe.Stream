@@ -73,21 +73,22 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
         rt, kind: 'rtmp-ingest', log, exit,
         hooks: {
             onDrain: () => closePublic(),
-            onDrainDeadline: () => endAll('drain_deadline'),
-            onEndRequested: (s) => endSession(s.id, 'end_requested'),
-            onLost: () => { for (const [nmsId] of publishers) stopNms(nmsId); return closeAll(); },
-            onHeartbeat: () => refreshMediaInfo(),
+            onDrainDeadline: async () => await endAll('drain_deadline'),
+            onEndRequested: async (s) => await endSession(s.id, 'end_requested'),
+            onLost: async () => { for (const [nmsId] of publishers) await stopNms(nmsId); return closeAll(); },
+            onHeartbeat: async () => await refreshMediaInfo(),
             activeCount: () => publishers.size,
             onExit: () => closeAll(),
         },
     });
 
+    // node-media-server's own session registry (in memory), not the store.
     function nms(id) { return context.sessions.get(id); }
     function stopNms(id) { const s = nms(id); if (s) { try { s.reject(); } catch { /* socket already gone */ } } }
 
     function on(event, fn) {
-        const wrapped = (...args) => {
-            try { fn(...args); } catch (err) {
+        const wrapped = async (...args) => {
+            try { await fn(...args); } catch (err) {
                 // A throw inside a node-media-server event is an uncaught exception, and that would
                 // take every publisher on this worker with it.
                 log.error(`[rtmp] ${event} handler failed: ${err.stack || err}`);
@@ -101,50 +102,84 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
         return Boolean(session && session.socket && publicPorts.has(session.socket.localPort));
     }
 
-    on('prePublish', (id, streamPath) => {
+    /**
+     * Admission of a publish: the key and the one-open-session rule are read from the store (PostgreSQL, async), but
+     * node-media-server's onPublish is synchronous and registers the stream right after 'prePublish'. So every RTMP
+     * session's publish command waits here first (newRtmpServer wraps onPublish), and 'prePublish' consumes the answer.
+     */
+    const admissions = new Map();
+    async function admit(s, streamPath) {
+        if (!isPublicSocket(s)) return { error: 'not the public listener' };
+        if (runtime.draining || !runtime.me || runtime.me.state !== 'ready') return { error: 'generation not taking sessions' };
+        if (publishers.size >= config.rtmp.maxPublishersPerWorker) return { error: 'worker full' };
+        const parts = String(streamPath).split('/');
+        if (parts.length !== 3 || parts[1] !== 'live') return { error: 'bad path' };
+        const r = await store.definitions.resolveIngestKey(parts[2], 'rtmp');
+        if (r.error) return { error: r.error };
+        const a = await store.sessions.admit({ definition: r.definition, key: r.key, protocol: 'rtmp', worker: runtime.me });
+        if (a.error) return { error: a.error };
+        return { sessionId: a.session.id, definitionId: r.definition.id, hint: r.key.hint };
+    }
+    function admitThenPublish(session) {
+        const onPublish = session.onPublish.bind(session);
+        session.onPublish = (invokeMessage) => {
+            // A second publish on a connection that already publishes: node-media-server answers
+            // NetStream.Publish.BadConnection without touching the first stream.
+            if (publishers.has(session.id)) return onPublish(invokeMessage);
+            const streamPath = `/${session.appname}/${String(invokeMessage.streamName || '').split('?')[0]}`;
+            admit(session, streamPath).then(async (adm) => {
+                if (!session.isStarting) {
+                    // The publisher left while it was being admitted: its session ends without going live.
+                    if (adm.sessionId) await store.sessions.finish(adm.sessionId, { reason: 'publisher_disconnected', actor: `worker:${runtime.me.id}` });
+                    return;
+                }
+                admissions.set(session.id, adm);
+                onPublish(invokeMessage);
+            }, (err) => {
+                log.error(`[rtmp] admission failed: ${err.stack || err}`);
+                admissions.set(session.id, { error: 'admission failed' });
+                if (session.isStarting) onPublish(invokeMessage);
+            });
+        };
+    }
+
+    on('prePublish', (id) => {
         const s = nms(id);
         if (!s) return;
         const reject = (why) => { log.log(`[rtmp] publish refused (${why}) from ${s.ip}`); s.reject(); };
-        // A second publish on a connection that already publishes: leave it to node-media-server,
-        // which answers NetStream.Publish.BadConnection without touching the first stream.
         if (publishers.has(id)) return undefined;
-        if (!isPublicSocket(s)) return reject('not the public listener');
-        if (runtime.draining || !runtime.me || runtime.me.state !== 'ready') return reject('generation not taking sessions');
-        if (publishers.size >= config.rtmp.maxPublishersPerWorker) return reject('worker full');
-        const parts = String(streamPath).split('/');
-        if (parts.length !== 3 || parts[1] !== 'live') return reject('bad path');
-        const r = store.definitions.resolveIngestKey(parts[2], 'rtmp');
-        if (r.error) return reject(r.error);
-        const a = store.sessions.admit({ definition: r.definition, key: r.key, protocol: 'rtmp', worker: runtime.me });
-        if (a.error) return reject(a.error);
+        const adm = admissions.get(id);
+        admissions.delete(id);
+        if (!adm) return reject('not admitted');
+        if (adm.error) return reject(adm.error);
         // Rename before node-media-server registers the publisher (it reads publishStreamPath
         // right after this synchronous event): from here on the stream is /live/<session id>.
-        s.publishStreamPath = `/live/${a.session.id}`;
-        publishers.set(id, { sessionId: a.session.id, definitionId: r.definition.id, endReason: null });
-        log.log(`[rtmp] session ${a.session.id} accepted for ${r.definition.id} (key …${r.key.hint})`);
+        s.publishStreamPath = `/live/${adm.sessionId}`;
+        publishers.set(id, { sessionId: adm.sessionId, definitionId: adm.definitionId, endReason: null });
+        log.log(`[rtmp] session ${adm.sessionId} accepted for ${adm.definitionId} (key …${adm.hint})`);
     });
 
-    on('postPublish', (id) => {
+    on('postPublish', async (id) => {
         const p = publishers.get(id);
         if (!p) return;
-        const t = store.sessions.transition(p.sessionId, 'live', { reason: 'media_flowing', actor: `worker:${runtime.me.id}` });
+        const t = await store.sessions.transition(p.sessionId, 'live', { reason: 'media_flowing', actor: `worker:${runtime.me.id}` });
         if (!t.ok) {
             // The coordinator failed it meanwhile (lease) — the transport must not outlive its record.
             log.warn(`[rtmp] session ${p.sessionId} could not go live (${t.code}); closing`);
-            stopNms(id);
+            await stopNms(id);
         }
     });
 
-    on('donePublish', (id) => {
+    on('donePublish', async (id) => {
         const p = publishers.get(id);
         if (!p) return;
         publishers.delete(id);
-        store.sessions.finish(p.sessionId, { reason: p.endReason || 'publisher_disconnected', actor: `worker:${runtime.me.id}` });
+        await store.sessions.finish(p.sessionId, { reason: p.endReason || 'publisher_disconnected', actor: `worker:${runtime.me.id}` });
         log.log(`[rtmp] session ${p.sessionId} ended (${p.endReason || 'publisher_disconnected'})`);
         if (runtime.draining) runtime.exitWhenIdle();
     });
 
-    on('prePlay', (id, streamPath) => {
+    on('prePlay', async (id, streamPath) => {
         const s = nms(id);
         if (!s) return;
         // RTMP play only on the loopback play port, and only by session path.
@@ -152,11 +187,11 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
         if (!SESSION_PATH_RE.test(String(streamPath))) s.reject();
     });
 
-    function refreshMediaInfo() {
+    async function refreshMediaInfo() {
         for (const [id, p] of publishers) {
             const s = nms(id);
             if (!s || !s.isPublishing) continue;
-            store.sessions.setMediaInfo(p.sessionId, {
+            await store.sessions.setMediaInfo(p.sessionId, {
                 video_codec: s.videoCodecName || null,
                 width: s.videoWidth || null,
                 height: s.videoHeight || null,
@@ -168,17 +203,17 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
         }
     }
 
-    function endSession(sessionId, reason) {
+    async function endSession(sessionId, reason) {
         for (const [id, p] of publishers) {
-            if (p.sessionId === sessionId) { p.endReason = reason; stopNms(id); return true; }
+            if (p.sessionId === sessionId) { p.endReason = reason; await stopNms(id); return true; }
         }
         // Not ours any more (publisher already gone): make sure the record is closed.
-        store.sessions.finish(sessionId, { reason, actor: `worker:${runtime.me.id}` });
+        await store.sessions.finish(sessionId, { reason, actor: `worker:${runtime.me.id}` });
         return false;
     }
 
-    function endAll(reason) {
-        for (const [id, p] of publishers) { p.endReason = reason; stopNms(id); }
+    async function endAll(reason) {
+        for (const [id, p] of publishers) { p.endReason = reason; await stopNms(id); }
     }
 
     function closePublic() {
@@ -209,6 +244,7 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
             srv.openSockets.add(socket);
             socket.on('close', () => srv.openSockets.delete(socket));
             const session = new NodeRtmpSession(nmsConfig, socket);
+            admitThenPublish(session);
             session.run();
         });
         srv.openSockets = new Set();
@@ -233,7 +269,7 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
         });
         const flvPort = await listenInRange(flvServer, config.rtmp.internalPortMin, config.rtmp.internalPortMax, new Set([rtmpPlayPort]));
         endpoints = { publicPort: config.rtmp.port, publicPorts: [...publicPorts], rtmpPlayPort, flvPort };
-        runtime.register(endpoints);
+        await runtime.register(endpoints);
 
         for (const port of publicPorts) {
             const srv = newRtmpServer();
@@ -244,7 +280,7 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
             srv.on('error', (err) => log.error(`[rtmp] public listener ${port}: ${err.message}`));
             publicServers.push(srv);
         }
-        runtime.ready();
+        await runtime.ready();
         log.log(`[rtmp] generation ${runtime.me.generation} ready: publish ${config.rtmp.bindHost}:${[...publicPorts].join(',')}, play 127.0.0.1:${rtmpPlayPort}, flv 127.0.0.1:${flvPort}`);
         return endpoints;
     }
@@ -254,29 +290,31 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
         runtime,
         endpoints: () => endpoints,
         publishers: () => [...publishers.values()],
-        drain: (reason) => runtime.drainNow(reason),
+        drain: async (reason) => await runtime.drainNow(reason),
         close: closeAll,
     };
 }
 
 if (require.main === module) {
-    require('dotenv').config({ path: process.env.OPENRE_ENV_FILE || path.join(process.cwd(), '.env') });
-    const { load, exitIfDrill } = require('../server/config');
-    const { openRuntime } = require('../server/store');
-    const config = load();
-    exitIfDrill(config, 'openre-rtmp-ingest');
-    const rt = openRuntime({ config });
-    const worker = createRtmpIngest({ rt });
-    let started = false;
-    worker.start().then(() => { started = true; }, (err) => { console.error(`[rtmp] failed to start: ${err.stack || err}`); process.exit(1); });
-    // node-media-server's own server logs an uncaught exception and keeps going (NodeMediaServer.run
-    // registers exactly that). A malformed packet from one encoder must not take every other
-    // publisher on this worker down with it, so the worker keeps that behaviour once it is up.
-    process.on('uncaughtException', (err) => {
-        console.error(`[rtmp] uncaught exception (worker keeps running): ${err && err.stack || err}`);
-        if (!started) process.exit(1);
-    });
-    for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => worker.drain(sig));
+    (async () => {
+        require('dotenv').config({ path: process.env.OPENRE_ENV_FILE || path.join(process.cwd(), '.env') });
+        const { load, exitIfDrill } = require('../server/config');
+        const { openRuntime } = require('../server/store');
+        const config = load();
+        exitIfDrill(config, 'openre-rtmp-ingest');
+        const rt = await openRuntime({ config });
+        const worker = createRtmpIngest({ rt });
+        let started = false;
+        worker.start().then(() => { started = true; }, (err) => { console.error(`[rtmp] failed to start: ${err.stack || err}`); process.exit(1); });
+        // node-media-server's own server logs an uncaught exception and keeps going (NodeMediaServer.run
+        // registers exactly that). A malformed packet from one encoder must not take every other
+        // publisher on this worker down with it, so the worker keeps that behaviour once it is up.
+        process.on('uncaughtException', (err) => {
+            console.error(`[rtmp] uncaught exception (worker keeps running): ${err && err.stack || err}`);
+            if (!started) process.exit(1);
+        });
+        for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => worker.drain(sig));
+    })().catch((err) => { console.error(`[rtmp-ingest] failed to start: ${err && err.stack || err}`); process.exit(1); });
 }
 
 module.exports = { createRtmpIngest, listenInRange };

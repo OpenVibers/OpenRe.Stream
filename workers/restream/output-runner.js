@@ -42,8 +42,8 @@ class OutputRunner {
         return t;
     }
 
-    report(change) { try { return this.store.outputs.report(this.outputId, change, { workerId: this.workerId }); } catch (err) { this.log.error(`[restream] report ${this.outputId}: ${err.message}`); return null; } }
-    note(level, message) { try { this.store.outputs.log(this.outputId, this.destinationId, level, this.scrub(message)); } catch { /* logs are best effort */ } }
+    async report(change) { try { return await this.store.outputs.report(this.outputId, change, { workerId: this.workerId }); } catch (err) { this.log.error(`[restream] report ${this.outputId}: ${err.message}`); return null; } }
+    async note(level, message) { try { await this.store.outputs.log(this.outputId, this.destinationId, level, this.scrub(message)); } catch { /* logs are best effort */ } }
 
     /** ffmpeg's stderr can echo the output URL: never let a destination key reach a log or event. */
     scrub(text) {
@@ -55,7 +55,7 @@ class OutputRunner {
     async start() {
         if (this.stopped) return;
         let dest;
-        try { dest = this.store.outputs.destinationForWorker(this.destinationId); } catch (err) {
+        try { dest = await this.store.outputs.destinationForWorker(this.destinationId); } catch (err) {
             return this.fail(`destination secrets unavailable: ${err.message}`, { cooldown: false });
         }
         if (!dest || !dest.enabled || dest.hold_reason) return this.stop('destination disabled');
@@ -139,13 +139,13 @@ class OutputRunner {
         }, this.o.liveAckTimeoutMs);
     }
 
-    confirmLive(proc) {
+    async confirmLive(proc) {
         if (this.proc !== proc || this.liveThisRun || this.stopped) return;
         this.liveThisRun = true;
         this.everLive = true;
         this.rapidCrashCount = 0;
         this.status = 'live';
-        try { this.store.outputs.clearDestinationCooldown(this.destinationId); } catch { /* */ }
+        try { await this.store.outputs.clearDestinationCooldown(this.destinationId); } catch { /* */ }
         this.report({ state: 'live', live_at: Date.now(), last_error: null });
         this.note('info', 'output is live');
         this.timer(() => {
@@ -201,14 +201,14 @@ class OutputRunner {
     }
 
     /** The circuit breaker: this output is done; the destination may cool down. */
-    fail(message, { cooldown }) {
+    async fail(message, { cooldown }) {
         if (this.stopped) return;
         message = this.scrub(message);
         this.stopped = true;
         this.clearTimers();
         let cooldownMinutes = null;
         if (cooldown) {
-            const r = this.store.outputs.markDestinationFailure(this.destinationId, message);
+            const r = await this.store.outputs.markDestinationFailure(this.destinationId, message);
             cooldownMinutes = r ? r.cooldownMinutes : null;
         }
         this.status = 'failed';

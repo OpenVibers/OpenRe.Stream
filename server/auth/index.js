@@ -54,7 +54,7 @@ function createKeyStore({ urls = [], pem = null, fetchImpl = globalThis.fetch, l
         return null;
     }
 
-    function start() {
+    async function start() {
         if (pem) return Promise.resolve(key);
         const attempt = async () => {
             const k = await fetchOnce();
@@ -63,7 +63,7 @@ function createKeyStore({ urls = [], pem = null, fetchImpl = globalThis.fetch, l
         };
         refreshTimer = setInterval(() => { fetchOnce().catch(() => {}); }, 6 * 60 * 60 * 1000);
         refreshTimer.unref?.();
-        return attempt();
+        return await attempt();
     }
 
     return { get: () => key, loaded: () => Boolean(key), start, stop() { clearTimeout(retryTimer); clearInterval(refreshTimer); }, fetchOnce };

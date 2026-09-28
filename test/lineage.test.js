@@ -8,9 +8,9 @@ const { createLineage } = require('../server/lineage');
 
 const t = suite('lineage');
 
-function setup(answer) {
+async function setup(answer) {
     const clock = manualClock();
-    const rt = runtime({ clock });
+    const rt = await runtime({ clock });
     const asked = [];
     const fetchImpl = async (url, opts = {}) => {
         const u = new URL(url);
@@ -29,34 +29,34 @@ function setup(answer) {
 const RESOLVED = { status: 'resolved', channel: { id: '17', slug: 'goosely', owner_subject: OWNER }, rule: 'slot', confidence: 'exact' };
 
 t('a Live-linked definition is resolved with its owner and slot; an unlinked one is never asked about', async () => {
-    const { rt, lineage, asked } = setup(RESOLVED);
-    const linked = rt.store.definitions.create({ owner_subject: OWNER, mirror_to_live: true, external_refs: [{ service: 'live', type: 'managed_stream', id: '12' }] }).definition;
-    rt.store.definitions.create({ owner_subject: OWNER, title: 'OpenRe only' });
+    const { rt, lineage, asked } = await setup(RESOLVED);
+    const linked = (await rt.store.definitions.create({ owner_subject: OWNER, mirror_to_live: true, external_refs: [{ service: 'live', type: 'managed_stream', id: '12' }] })).definition;
+    await rt.store.definitions.create({ owner_subject: OWNER, title: 'OpenRe only' });
     const out = await lineage.refresh();
     assert.deepStrictEqual(out, { checked: 1, resolved: 1 });
     assert.deepStrictEqual(asked, [{ owner_subject: OWNER, slot_id: '12' }], 'owner subject and slot id, never a display name');
-    const row = rt.db.prepare('SELECT resolution FROM definition_lineage WHERE definition_id = ?').get(linked.id);
+    const row = await rt.db.prepare('SELECT resolution FROM definition_lineage WHERE definition_id = ?').get(linked.id);
     assert.strictEqual(JSON.parse(row.resolution).channel.slug, 'goosely');
     assert.deepStrictEqual(await lineage.refresh(), { checked: 0, resolved: 0 }, 'fresh answers are not asked again');
 });
 
 t('session events carry the resolved channel', async () => {
-    const { rt, coordinator } = setup(RESOLVED);
-    const { definition, key } = rt.store.definitions.create({ owner_subject: OWNER, mirror_to_live: true, external_refs: [{ service: 'live', type: 'managed_stream', id: '12' }] });
+    const { rt, coordinator } = await setup(RESOLVED);
+    const { definition, key } = await rt.store.definitions.create({ owner_subject: OWNER, mirror_to_live: true, external_refs: [{ service: 'live', type: 'managed_stream', id: '12' }] });
     await coordinator.tick();
-    const w = rt.store.workers.register({ kind: 'rtmp-ingest', endpoints: { flvPort: 19361, rtmpPlayPort: 19360 } }); rt.store.workers.ready(w.id);
-    const a = rt.store.sessions.admit({ definition, key, protocol: 'rtmp', worker: rt.store.workers.get(w.id) });
-    rt.store.sessions.transition(a.session.id, 'live');
-    const started = outboxEnvelopes(rt.db).find((e) => e.event_type === 'openre.session.started');
+    const w = await rt.store.workers.register({ kind: 'rtmp-ingest', endpoints: { flvPort: 19361, rtmpPlayPort: 19360 } }); await rt.store.workers.ready(w.id);
+    const a = await rt.store.sessions.admit({ definition, key, protocol: 'rtmp', worker: await rt.store.workers.get(w.id) });
+    await rt.store.sessions.transition(a.session.id, 'live');
+    const started = (await outboxEnvelopes(rt.db)).find((e) => e.event_type === 'openre.session.started');
     assert.deepStrictEqual(started.payload.lineage, { channel: { service: 'live', id: '17', slug: 'goosely', owner_subject: OWNER }, rule: 'slot' });
 });
 
 t('unresolved answers are kept but not carried; a stale answer is asked again; Live down waits for the next tick', async () => {
     let mode = 'unresolved';
-    const { rt, clock, lineage } = setup((u) => (mode === 'down' ? { status: 503, ok: false, json: async () => ({}) } : { status: 200, ok: true, json: async () => (mode === 'unresolved' ? { status: 'unresolved', reason: 'no_match' } : RESOLVED) }));
-    const { definition } = rt.store.definitions.create({ owner_subject: OWNER, mirror_to_live: true });
+    const { rt, clock, lineage } = await setup((u) => (mode === 'down' ? { status: 503, ok: false, json: async () => ({}) } : { status: 200, ok: true, json: async () => (mode === 'unresolved' ? { status: 'unresolved', reason: 'no_match' } : RESOLVED) }));
+    const { definition } = await rt.store.definitions.create({ owner_subject: OWNER, mirror_to_live: true });
     assert.deepStrictEqual(await lineage.refresh(), { checked: 1, resolved: 0 });
-    assert.strictEqual(rt.store.sessions.liveLineage(definition.id), null, 'an unresolved answer is not carried');
+    assert.strictEqual(await rt.store.sessions.liveLineage(definition.id), null, 'an unresolved answer is not carried');
     mode = 'down';
     clock.advance(16 * 60 * 1000);
     assert.deepStrictEqual(await lineage.refresh(), { checked: 0, resolved: 0 });
@@ -67,7 +67,7 @@ t('unresolved answers are kept but not carried; a stale answer is asked again; L
 
 t('off without a service secret', async () => {
     const clock = manualClock();
-    const rt = runtime({ clock });
+    const rt = await runtime({ clock });
     const off = createLineage({ db: rt.db, config: { ...rt.config, oauth: { ...rt.config.oauth, clientSecret: '' } }, env: {}, fetchImpl: () => { throw new Error('no calls'); }, log: silent });
     assert.strictEqual(off.enabled, false);
     assert.deepStrictEqual(await off.refresh(), { skipped: 'off' });

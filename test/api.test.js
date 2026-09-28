@@ -88,8 +88,8 @@ t('rotation over HTTP returns the new key once and the old one stops authenticat
     assert.strictEqual(r.status, 200);
     assert.notStrictEqual(r.body.key.key, firstKey);
     assert.strictEqual(r.body.retired[0].status, 'revoked');
-    assert.strictEqual(api.rt.store.definitions.resolveIngestKey(firstKey, 'rtmp').error, 'revoked_key');
-    assert.ok(api.rt.store.definitions.resolveIngestKey(r.body.key.key, 'rtmp').definition);
+    assert.strictEqual((await api.rt.store.definitions.resolveIngestKey(firstKey, 'rtmp')).error, 'revoked_key');
+    assert.ok((await api.rt.store.definitions.resolveIngestKey(r.body.key.key, 'rtmp')).definition);
 });
 
 t('destinations: validated, masked, never returned in full; SSRF rules apply', async () => {
@@ -129,13 +129,13 @@ t('the destination test reports URL, DNS and TCP checks without pushing media', 
 
 t('sessions: list, detail with playback descriptor, end request', async () => {
     const rt = api.rt;
-    const w = rt.store.workers.register({ kind: 'rtmp-ingest', endpoints: { publicPort: 1936, rtmpPlayPort: 19370, flvPort: 19371 } });
-    rt.store.workers.ready(w.id);
-    const def = rt.store.definitions.get(streamId);
-    const a = rt.store.sessions.admit({ definition: def, key: null, protocol: 'rtmp', worker: rt.store.workers.get(w.id) });
-    rt.store.sessions.transition(a.session.id, 'live');
+    const w = await rt.store.workers.register({ kind: 'rtmp-ingest', endpoints: { publicPort: 1936, rtmpPlayPort: 19370, flvPort: 19371 } });
+    await rt.store.workers.ready(w.id);
+    const def = await rt.store.definitions.get(streamId);
+    const a = await rt.store.sessions.admit({ definition: def, key: null, protocol: 'rtmp', worker: await rt.store.workers.get(w.id) });
+    await rt.store.sessions.transition(a.session.id, 'live');
     const list = await request(api.base, 'GET', '/api/v1/sessions?state=live', { token: owner });
-    assert.deepStrictEqual(list.body.sessions.map(s => s.id), [a.session.id]);
+    assert.deepStrictEqual(await list.body.sessions.map(s => s.id), [a.session.id]);
     const detail = await request(api.base, 'GET', `/api/v1/sessions/${a.session.id}`, { token: owner });
     assert.strictEqual(detail.body.session.playback.flv.internal_url, `http://127.0.0.1:19371/live/${a.session.id}.flv`);
     assert.strictEqual(detail.body.session.playback.flv.public_url, `${api.config.baseUrl}/play/${a.session.id}.flv`);
@@ -145,11 +145,11 @@ t('sessions: list, detail with playback descriptor, end request', async () => {
     assert.strictEqual(noEndCap.status, 403);
     const end = await request(api.base, 'POST', `/api/v1/sessions/${a.session.id}/end`, { token: owner });
     assert.strictEqual(end.status, 202);
-    assert.strictEqual(rt.store.sessions.get(a.session.id).desired_state, 'end');
+    assert.strictEqual((await rt.store.sessions.get(a.session.id)).desired_state, 'end');
     // Archiving is refused while it is open.
     const del = await request(api.base, 'DELETE', `/api/v1/streams/${streamId}`, { token: owner });
     assert.strictEqual(del.status, 409);
-    rt.store.sessions.finish(a.session.id, { reason: 'test' });
+    await rt.store.sessions.finish(a.session.id, { reason: 'test' });
     assert.strictEqual((await request(api.base, 'GET', `/play/${a.session.id}.flv`)).status, 404, 'no playback for an ended session');
 });
 

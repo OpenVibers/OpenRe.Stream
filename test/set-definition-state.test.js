@@ -40,7 +40,7 @@ t('setup: a definition made for Live slot 12, as Live does at the switch', async
     assert.strictEqual(created.status, 201);
     streamId = created.body.stream.id;
     key = created.body.key.key;
-    assert.ok(api.rt.store.definitions.resolveIngestKey(key, 'rtmp').definition);
+    assert.ok((await api.rt.store.definitions.resolveIngestKey(key, 'rtmp')).definition);
 });
 
 t('--state disabled: the definition is disabled and its key refused at the handshake', async () => {
@@ -48,7 +48,7 @@ t('--state disabled: the definition is disabled and its key refused at the hands
     const r = await run({ slot: '12', state: 'disabled', env, fetchImpl, log });
     assert.deepStrictEqual(r, { id: streamId, state: 'disabled', changed: true, open_session: null });
     assert.deepStrictEqual(tokenRequests.at(-1), { grant_type: 'client_credentials', client_id: 'live', client_secret: CLIENT_SECRET, audience: 'openvibe.openre' });
-    assert.deepStrictEqual(api.rt.store.definitions.resolveIngestKey(key, 'rtmp'), { error: 'stream_disabled' });
+    assert.deepStrictEqual(await api.rt.store.definitions.resolveIngestKey(key, 'rtmp'), { error: 'stream_disabled' });
     assert.match(log.lines.join('\n'), new RegExp(`${streamId} \\(live:managed_stream:12\\): active → disabled`));
     for (const l of log.lines) { assert.ok(!l.includes(key)); assert.ok(!l.includes(CLIENT_SECRET)); }
     const again = await run({ slot: '12', state: 'disabled', env, fetchImpl, log });
@@ -58,7 +58,7 @@ t('--state disabled: the definition is disabled and its key refused at the hands
 t('--state active: the same key works again (re-switching the slot later)', async () => {
     const r = await run({ slot: '12', state: 'active', env, fetchImpl, log: () => {} });
     assert.strictEqual(r.state, 'active');
-    assert.ok(api.rt.store.definitions.resolveIngestKey(key, 'rtmp').definition);
+    assert.ok((await api.rt.store.definitions.resolveIngestKey(key, 'rtmp')).definition);
 });
 
 t('a slot without a definition is an error; arguments are checked', async () => {

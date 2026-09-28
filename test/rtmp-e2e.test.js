@@ -13,7 +13,7 @@ const assert = require('assert');
 const http = require('http');
 const { spawn } = require('child_process');
 const {
-    tmpDir, testEnv, child, waitFor, request, userToken, freePort, sleep, suite, hasFfmpeg, publish, rtmpSink, OWNER,
+    tmpDir, testEnv, multiProcess, child, waitFor, request, userToken, freePort, sleep, suite, hasFfmpeg, publish, rtmpSink, OWNER,
 } = require('./helpers');
 
 if (!hasFfmpeg()) {
@@ -21,6 +21,10 @@ if (!hasFfmpeg()) {
     process.exit(0);
 }
 
+if (!multiProcess()) {
+    console.log('rtmp-e2e: skipped (the four OpenRe processes share one database: PostgreSQL only, npm run test:pg)');
+    process.exit(0);
+}
 const t = suite('rtmp-e2e');
 const token = userToken({ subjectId: OWNER });
 const procs = [];
@@ -104,7 +108,7 @@ t('setup: stubs and the four OpenRe processes', async () => {
     });
     rtmpPort = await freePort();
     const dir = tmpDir();
-    env = testEnv(dir, {
+    env = await testEnv(dir, {
         PORT: String(await freePort()),
         OPENRE_RTMP_PORT: String(rtmpPort),
         OPENRE_RTMP_INTERNAL_PORT_MIN: String(20000 + Math.floor(Math.random() * 20000)),
@@ -153,7 +157,7 @@ t('a wrong key is refused; the right key goes live on generation 1', async () =>
     assert.notStrictEqual(w.code, 0, 'ffmpeg with a wrong key fails');
     pubA = publish(`rtmp://127.0.0.1:${rtmpPort}/live/${keyA}`);
     procs.push(pubA);
-    sessionA = await waitFor(() => session(streamA), { what: 'session A live', timeoutMs: 15000 });
+    sessionA = await waitFor(async () => await session(streamA), { what: 'session A live', timeoutMs: 15000 });
     assert.strictEqual(sessionA.worker.generation, 1);
 });
 
@@ -171,7 +175,7 @@ t('the working destination goes live, the dead one fails, the session stays live
         const o = r.body.outputs || [];
         return o.length === 2 && o.some(x => x.state === 'live') && o.some(x => x.state === 'failed') ? o : null;
     }, { what: 'outputs live + failed', timeoutMs: 40000 });
-    const failed = outputs.find(o => o.state === 'failed');
+    const failed = await outputs.find(o => o.state === 'failed');
     assert.match(failed.last_error, /connect|closed|refused|rapid/i);
     assert.strictEqual((await session(streamA)).id, sessionA.id, 'the source session is still live');
     assert.strictEqual(pubA.exitCode, null, 'the encoder is still connected');
@@ -201,7 +205,7 @@ t('restarting the API during the broadcast ends nothing; playback works through 
     assert.strictEqual(s && s.id, sessionA.id);
     assert.strictEqual(pubA.exitCode, null);
     const outputs = (await request(base, 'GET', `/api/v1/sessions/${sessionA.id}/outputs`, { token })).body.outputs;
-    assert.ok(outputs.some(o => o.state === 'live'), 'the restream kept running');
+    assert.ok(await outputs.some(o => o.state === 'live'), 'the restream kept running');
     const head = await new Promise((resolve, reject) => {
         http.get(`${base}/play/${sessionA.id}.flv`, (res) => {
             assert.strictEqual(res.statusCode, 200);
@@ -224,7 +228,7 @@ t('a new rtmp-ingest generation takes new sessions; generation 1 drains but keep
     streamB = r.body.stream.id;
     pubB = publish(`rtmp://127.0.0.1:${rtmpPort}/live/${r.body.key.key}`);
     procs.push(pubB);
-    const sB = await waitFor(() => session(streamB), { what: 'session B live', timeoutMs: 15000 });
+    const sB = await waitFor(async () => await session(streamB), { what: 'session B live', timeoutMs: 15000 });
     assert.strictEqual(sB.worker.generation, 2, 'new sessions reach the newest generation');
     const sA = await session(streamA);
     assert.strictEqual(sA.id, sessionA.id);

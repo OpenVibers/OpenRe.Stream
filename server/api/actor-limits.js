@@ -10,7 +10,7 @@
  */
 'use strict';
 
-const { createActorLimiter } = require('openvibe-sdk/limits');
+const { createActorLimiter, createValkeyLimitStore } = require('openvibe-sdk/limits');
 
 const num = (v, d) => { const n = parseInt(v, 10); return Number.isFinite(n) && n > 0 ? n : d; };
 
@@ -23,7 +23,7 @@ const ROUTES = [
     ['openre.stream.create', /^POST$/, /^\/streams\/?$/, { minute: 10, hour: 100 }],
 ];
 
-function createOpenReActorLimits({ env = process.env, registry = null, now } = {}) {
+function createOpenReActorLimits({ env = process.env, registry = null, now, valkey = null } = {}) {
     const refused = registry && typeof registry.counter === 'function'
         ? registry.counter({ name: 'openre_rate_limited_total', help: 'API writes refused 429 by a per-actor limit, by limit name and window', labelNames: ['limit', 'window'] })
         : null;
@@ -31,6 +31,8 @@ function createOpenReActorLimits({ env = process.env, registry = null, now } = {
         limits: { minute: num(env.OPENRE_LIMITS_MINUTE, 120), hour: num(env.OPENRE_LIMITS_HOUR, 3000) },
         actor: (req) => (req.caller && req.caller.kind === 'user' && req.caller.subject ? `user:${req.caller.subject}` : null),
         ...(now ? { now } : {}),
+        // Valkey (ADR-035): counters survive a restart of openre-api and are shared if it ever runs twice.
+        ...(valkey ? { store: createValkeyLimitStore(valkey) } : {}),
         onLimited(e) {
             console.warn(`[Limits] ${e.name}: ${e.actor} refused, over ${e.limit} per ${e.window}`);
             if (refused) refused.inc({ limit: e.name, window: e.window });

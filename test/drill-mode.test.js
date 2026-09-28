@@ -13,7 +13,7 @@ const { createRtmpIngest } = require('../workers/rtmp-ingest');
 const { createRestreamWorker } = require('../workers/restream-worker');
 const { createUnportedTransport } = require('../workers/unported-transport');
 const { openDb } = require('../server/db');
-const { runtime, bootApi, request, serviceToken, tmpDir, testEnv, child, suite, silent } = require('./helpers');
+const { runtime, bootApi, request, serviceToken, tmpDir, testEnv, child, suite, silent, testDb } = require('./helpers');
 
 const t = suite('drill-mode');
 // What the production env file sets: with these, a non-drill process would publish and record.
@@ -26,10 +26,10 @@ t('OPENRE_DRILL parses like the other switches and is off by default', () => {
     for (const v of ['', '0', 'false', 'off']) assert.strictEqual(load({ OPENRE_DRILL: v }).drill, false, v);
 });
 
-t('no event relay and no Media client in a drill, even with production credentials', () => {
-    const on = load(testEnv(tmpDir(), PROD_LIKE));
-    const off = load(testEnv(tmpDir(), { ...PROD_LIKE, OPENRE_DRILL: '1' }));
-    const db = openDb(':memory:');
+t('no event relay and no Media client in a drill, even with production credentials', async () => {
+    const on = load(await testEnv(tmpDir(), PROD_LIKE));
+    const off = load(await testEnv(tmpDir(), { ...PROD_LIKE, OPENRE_DRILL: '1' }));
+    const db = (await testDb(tmpDir())).db;
     assert.strictEqual(createEvents({ config: on, db, log: silent }).configured, true, 'control: the same env publishes outside a drill');
     const ev = createEvents({ config: off, db, log: silent });
     assert.strictEqual(ev.configured, false);
@@ -39,21 +39,21 @@ t('no event relay and no Media client in a drill, even with production credentia
     db.close();
 });
 
-t('the coordinator and every transport worker refuse to be created in a drill', () => {
-    const rt = runtime({ env: { OPENRE_DRILL: '1' } });
+t('the coordinator and every transport worker refuse to be created in a drill', async () => {
+    const rt = await runtime({ env: { OPENRE_DRILL: '1' } });
     const drill = (fn) => assert.throws(fn, (err) => err.code === 'OPENRE_DRILL' && /restore drill/.test(err.message));
     drill(() => createCoordinator({ rt, media: null, log: silent }));
     drill(() => createRtmpIngest({ rt, log: silent, exit: () => {} }));
     drill(() => createRestreamWorker({ rt, log: silent, exit: () => {} }));
     for (const kind of ['webrtc-ingest', 'sfu', 'jsmpeg']) drill(() => createUnportedTransport({ rt, kind, log: silent, exit: () => {} }));
-    assert.strictEqual(rt.db.prepare('SELECT count(*) AS n FROM workers').get().n, 0, 'no generation registered');
-    assert.strictEqual(rt.db.prepare('SELECT count(*) AS n FROM leases').get().n, 0, 'no coordinator lease taken');
+    assert.strictEqual((await rt.db.prepare('SELECT count(*) AS n FROM workers').get()).n, 0, 'no generation registered');
+    assert.strictEqual((await rt.db.prepare('SELECT count(*) AS n FROM leases').get()).n, 0, 'no coordinator lease taken');
 });
 
 t('the entry points exit before opening the database', async () => {
     for (const script of ['workers/coordinator.js', 'workers/rtmp-ingest.js', 'workers/restream-worker.js', 'workers/sfu.js']) {
         const dir = tmpDir();
-        const p = child(script, testEnv(dir, { ...PROD_LIKE, OPENRE_DRILL: '1' }));
+        const p = child(script, await testEnv(dir, { ...PROD_LIKE, OPENRE_DRILL: '1' }));
         const r = await p.exited;
         assert.strictEqual(r.code, 1, `${script} exit code`);
         assert.match(p.output, /does not run in a restore drill/, script);
@@ -73,7 +73,7 @@ t('openre-api in a drill: reads work and match a normal instance; writes, /play/
     assert.strictEqual(met.status, 200, 'loopback /metrics (Track O)');
     const health = await request(normal.base, 'GET', '/api/health');
     const list = await request(normal.base, 'GET', '/api/v1/streams', { token: reader });
-    const outboxBefore = normal.rt.db.prepare('SELECT count(*) AS n FROM event_outbox').get().n;
+    const outboxBefore = (await normal.rt.db.prepare('SELECT count(*) AS n FROM event_outbox').get()).n;
     await normal.close();
 
     const drill = await bootApi({ dir, env: { ...PROD_LIKE, OPENRE_DRILL: '1' } });
@@ -100,9 +100,9 @@ t('openre-api in a drill: reads work and match a normal instance; writes, /play/
         assert.strictEqual(play.status, 503);
         const login = await request(drill.base, 'GET', '/auth/login');
         assert.strictEqual(login.status, 503);
-        const count = drill.rt.db.prepare('SELECT count(*) AS n FROM stream_definitions').get().n;
+        const count = (await drill.rt.db.prepare('SELECT count(*) AS n FROM stream_definitions').get()).n;
         assert.strictEqual(count, 1, 'nothing was written');
-        assert.strictEqual(drill.rt.db.prepare('SELECT count(*) AS n FROM event_outbox').get().n, outboxBefore, 'no event enqueued');
+        assert.strictEqual((await drill.rt.db.prepare('SELECT count(*) AS n FROM event_outbox').get()).n, outboxBefore, 'no event enqueued');
     } finally {
         await drill.close();
     }

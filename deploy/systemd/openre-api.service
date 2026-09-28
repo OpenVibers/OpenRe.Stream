@@ -2,8 +2,8 @@
 Description=OpenRe.Stream API and UI (openre-api): definitions, keys, destinations, sessions, playback proxy
 # The API owns no transport. Restarting it (every API deploy) never touches the transport
 # workers: they are separate units with no dependency on this one, in either direction.
-After=network.target
-Wants=openvibe-network.service
+After=network.target postgresql.service pgbouncer.service valkey-server.service
+Wants=openvibe-network.service postgresql.service pgbouncer.service valkey-server.service
 
 [Service]
 Type=simple
@@ -13,6 +13,7 @@ WorkingDirectory=/opt/openre.stream/current
 EnvironmentFile=/etc/openvibe/openre.env
 Environment=NODE_ENV=production
 Environment=PORT=4500
+# The SQLite file the one-time move read (scripts/migrate-to-postgres.js); the store is ov_openre (ADR-035).
 Environment=OPENRE_DB_PATH=/var/lib/openre/openre.db
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/bin/env node server/index.js

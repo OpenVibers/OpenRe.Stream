@@ -40,7 +40,7 @@ function createOutputs({ db, config, events, clock, box, definitions, sessions }
             WHERE state IN ${OPEN} AND (desired = 'stop' AND (worker_id IS NULL OR worker_id IN (SELECT id FROM workers WHERE state IN ('stopped', 'lost'))))`),
         insertLog: db.prepare('INSERT INTO output_logs (output_id, destination_id, level, message, at) VALUES (?, ?, ?, ?, ?)'),
         pruneLogs: db.prepare(`DELETE FROM output_logs WHERE id IN (SELECT id FROM output_logs WHERE destination_id = ? AND
-            (output_id IS ? OR output_id = ?) ORDER BY id DESC LIMIT -1 OFFSET ?)`),
+            (output_id IS NOT DISTINCT FROM ? OR output_id = ?) ORDER BY id DESC LIMIT ALL OFFSET ?)`),
         logsOfOutput: db.prepare('SELECT level, message, at FROM output_logs WHERE output_id = ? ORDER BY id DESC LIMIT ?'),
         logsOfDest: db.prepare('SELECT output_id, level, message, at FROM output_logs WHERE destination_id = ? ORDER BY id DESC LIMIT ?'),
     };
@@ -126,21 +126,21 @@ function createOutputs({ db, config, events, clock, box, definitions, sessions }
         return f;
     }
 
-    function createDestination(definitionId, input, { hold_reason = null } = {}) {
-        const def = definitions.get(definitionId);
+    async function createDestination(definitionId, input, { hold_reason = null } = {}) {
+        const def = await definitions.get(definitionId);
         if (!def || def.state === 'archived') throw new StoreError(404, 'openre.stream_not_found', 'no such stream definition');
-        if (q.countOf.get(definitionId).n >= config.outputs.maxPerStream) throw new StoreError(409, 'openre.too_many_destinations', `at most ${config.outputs.maxPerStream} destinations per stream`);
+        if ((await q.countOf.get(definitionId)).n >= config.outputs.maxPerStream) throw new StoreError(409, 'openre.too_many_destinations', `at most ${config.outputs.maxPerStream} destinations per stream`);
         const f = destFields(input, { creating: true });
         const id = newId('destination', now());
         const row = { id, definition_id: definitionId, enabled: 1, auto_start: 1, quality_preset: 'auto', ...f, hold_reason, created_at: now(), updated_at: now() };
         if (hold_reason) row.enabled = 0;
         const cols = Object.keys(row);
-        db.prepare(`INSERT INTO destinations (${cols.join(', ')}) VALUES (${cols.map(c => `@${c}`).join(', ')})`).run(row);
-        return publicDest(q.getDest.get(id));
+        await db.prepare(`INSERT INTO destinations (${cols.join(', ')}) VALUES (${cols.map(c => `@${c}`).join(', ')})`).run(row);
+        return publicDest(await q.getDest.get(id));
     }
 
-    function updateDestination(id, input) {
-        const d = q.getDest.get(id);
+    async function updateDestination(id, input) {
+        const d = await q.getDest.get(id);
         if (!d) throw new StoreError(404, 'openre.destination_not_found', 'no such destination');
         const f = destFields(input, { creating: false });
         // Re-enabling a held destination is an explicit owner decision: the hold is lifted only
@@ -153,42 +153,42 @@ function createOutputs({ db, config, events, clock, box, definitions, sessions }
         if (!Object.keys(f).length) return publicDest(d);
         f.updated_at = now();
         const cols = Object.keys(f);
-        db.prepare(`UPDATE destinations SET ${cols.map(c => `${c} = @${c}`).join(', ')} WHERE id = @id`).run({ ...f, id });
-        return publicDest(q.getDest.get(id));
+        await db.prepare(`UPDATE destinations SET ${cols.map(c => `${c} = @${c}`).join(', ')} WHERE id = @id`).run({ ...f, id });
+        return publicDest(await q.getDest.get(id));
     }
 
-    function deleteDestination(id) {
-        const d = q.getDest.get(id);
+    async function deleteDestination(id) {
+        const d = await q.getDest.get(id);
         if (!d) throw new StoreError(404, 'openre.destination_not_found', 'no such destination');
-        db.transaction(() => {
-            db.prepare(`UPDATE outputs SET desired = 'stop', updated_at = ? WHERE destination_id = ? AND state IN ${OPEN}`).run(now(), id);
-            const running = db.prepare(`SELECT 1 FROM outputs WHERE destination_id = ? AND state IN ${OPEN} AND worker_id IS NOT NULL`).get(id);
+        await db.tx(async () => {
+            await db.prepare(`UPDATE outputs SET desired = 'stop', updated_at = ? WHERE destination_id = ? AND state IN ${OPEN}`).run(now(), id);
+            const running = await db.prepare(`SELECT 1 FROM outputs WHERE destination_id = ? AND state IN ${OPEN} AND worker_id IS NOT NULL`).get(id);
             if (running) throw new StoreError(409, 'openre.destination_running', 'the destination is running; it has been asked to stop, delete it again in a few seconds');
-            q.deleteDest.run(id);
-        })();
+            await q.deleteDest.run(id);
+        });
         return true;
     }
 
     /** Destination row with its secrets opened, for the restream worker only. */
-    function destinationForWorker(id) {
-        const d = q.getDest.get(id);
+    async function destinationForWorker(id) {
+        const d = await q.getDest.get(id);
         if (!d) return null;
         return { ...d, stream_key: box.open(d.stream_key_enc), srt_passphrase: box.open(d.srt_passphrase_enc) };
     }
 
-    function markDestinationFailure(id, error) {
-        const d = q.getDest.get(id);
+    async function markDestinationFailure(id, error) {
+        const d = await q.getDest.get(id);
         if (!d) return null;
         const n = (d.consecutive_failures || 0) + 1;
         // Same escalation as Live: 15 min, 1 h, 6 h, then 24 h.
         const mins = n <= 1 ? 15 : n === 2 ? 60 : n === 3 ? 360 : 1440;
-        db.prepare('UPDATE destinations SET consecutive_failures = ?, last_error = ?, last_failed_at = ?, cooldown_until = ?, updated_at = ? WHERE id = ?')
+        await db.prepare('UPDATE destinations SET consecutive_failures = ?, last_error = ?, last_failed_at = ?, cooldown_until = ?, updated_at = ? WHERE id = ?')
             .run(n, String(error || 'restream failed to go live').slice(0, 300), now(), now() + mins * 60000, now(), id);
         return { failures: n, cooldownMinutes: mins };
     }
 
-    function clearDestinationCooldown(id) {
-        db.prepare('UPDATE destinations SET consecutive_failures = 0, cooldown_until = NULL, last_error = NULL WHERE id = ? AND (consecutive_failures > 0 OR cooldown_until IS NOT NULL OR last_error IS NOT NULL)').run(id);
+    async function clearDestinationCooldown(id) {
+        await db.prepare('UPDATE destinations SET consecutive_failures = 0, cooldown_until = NULL, last_error = NULL WHERE id = ? AND (consecutive_failures > 0 OR cooldown_until IS NOT NULL OR last_error IS NOT NULL)').run(id);
     }
 
     // ── Outputs ───────────────────────────────────────────────
@@ -217,13 +217,13 @@ function createOutputs({ db, config, events, clock, box, definitions, sessions }
     }
 
     /** Coordinator: every live session gets an output per enabled, auto-start, usable destination. */
-    function ensureAutoOutputs() {
-        const rows = db.prepare(`SELECT s.id AS session_id, d.id AS destination_id FROM ingest_sessions s
+    async function ensureAutoOutputs() {
+        const rows = await db.prepare(`SELECT s.id AS session_id, d.id AS destination_id FROM ingest_sessions s
             JOIN destinations d ON d.definition_id = s.definition_id
             LEFT JOIN outputs o ON o.session_id = s.id AND o.destination_id = d.id
             WHERE s.state = 'live' AND d.enabled = 1 AND d.auto_start = 1 AND d.hold_reason IS NULL
               AND d.stream_key_enc IS NOT NULL AND (d.cooldown_until IS NULL OR d.cooldown_until <= ?) AND o.id IS NULL`).all(now());
-        for (const r of rows) q.insertOut.run(newId('output', now()), r.session_id, r.destination_id, now(), now());
+        for (const r of rows) await q.insertOut.run(newId('output', now()), r.session_id, r.destination_id, now(), now());
         return rows.length;
     }
 
@@ -231,44 +231,44 @@ function createOutputs({ db, config, events, clock, box, definitions, sessions }
      * Manual start (the owner pressed Start): creates or re-arms the output for the destination's
      * current live session. A manual start ignores a failure cooldown, like Live's.
      */
-    function startDestination(destinationId) {
-        const d = q.getDest.get(destinationId);
+    async function startDestination(destinationId) {
+        const d = await q.getDest.get(destinationId);
         if (!d) throw new StoreError(404, 'openre.destination_not_found', 'no such destination');
         if (d.hold_reason) throw new StoreError(409, 'openre.destination_held', `held: ${d.hold_reason}`);
         if (!d.enabled) throw new StoreError(409, 'openre.destination_disabled', 'enable the destination first');
         if (!d.stream_key_enc) throw new StoreError(409, 'openre.destination_no_key', 'the destination has no stream key');
-        const session = sessions.list({ definition_id: d.definition_id, state: 'live', limit: 1 })[0];
+        const session = (await sessions.list({ definition_id: d.definition_id, state: 'live', limit: 1 }))[0];
         if (!session) throw new StoreError(409, 'openre.not_live', 'the stream is not live');
-        return db.transaction(() => {
-            clearDestinationCooldown(d.id);
-            const existing = q.outBySessionDest.get(session.id, d.id);
+        return await db.tx(async () => {
+            await clearDestinationCooldown(d.id);
+            const existing = await q.outBySessionDest.get(session.id, d.id);
             if (!existing) {
                 const id = newId('output', now());
-                q.insertOut.run(id, session.id, d.id, now(), now());
-                return publicOutput(q.getOut.get(id));
+                await q.insertOut.run(id, session.id, d.id, now(), now());
+                return publicOutput(await q.getOut.get(id));
             }
             if (['pending', 'starting', 'live', 'error'].includes(existing.state) && existing.desired === 'run') return publicOutput(existing);
             if (['pending', 'starting', 'live', 'error'].includes(existing.state)) {
-                db.prepare("UPDATE outputs SET desired = 'run', updated_at = ? WHERE id = ?").run(now(), existing.id);
+                await db.prepare("UPDATE outputs SET desired = 'run', updated_at = ? WHERE id = ?").run(now(), existing.id);
             } else {
-                db.prepare(`UPDATE outputs SET desired = 'run', state = 'pending', worker_id = NULL, worker_generation = NULL,
+                await db.prepare(`UPDATE outputs SET desired = 'run', state = 'pending', worker_id = NULL, worker_generation = NULL,
                     restart_attempts = 0, next_restart_at = NULL, last_error = NULL, ended_at = NULL, updated_at = ? WHERE id = ?`).run(now(), existing.id);
             }
-            return publicOutput(q.getOut.get(existing.id));
-        })();
+            return publicOutput(await q.getOut.get(existing.id));
+        });
     }
 
-    function stopDestination(destinationId) {
-        const n = db.prepare(`UPDATE outputs SET desired = 'stop', updated_at = ? WHERE destination_id = ? AND desired = 'run' AND state IN ${OPEN}`).run(now(), destinationId).changes;
+    async function stopDestination(destinationId) {
+        const n = (await db.prepare(`UPDATE outputs SET desired = 'stop', updated_at = ? WHERE destination_id = ? AND desired = 'run' AND state IN ${OPEN}`).run(now(), destinationId)).changes;
         // Pending outputs nobody has picked up can stop right here.
-        db.prepare("UPDATE outputs SET state = 'stopped', ended_at = ?, updated_at = ? WHERE destination_id = ? AND desired = 'stop' AND state = 'pending' AND worker_id IS NULL").run(now(), now(), destinationId);
+        await db.prepare("UPDATE outputs SET state = 'stopped', ended_at = ?, updated_at = ? WHERE destination_id = ? AND desired = 'stop' AND state = 'pending' AND worker_id IS NULL").run(now(), now(), destinationId);
         return n;
     }
 
     /** Coordinator: hand pending outputs to the newest ready restream generation. */
-    function assignPending(worker) {
+    async function assignPending(worker) {
         let n = 0;
-        for (const o of q.pendingUnassigned.all()) n += q.assign.run(worker.id, worker.generation, now(), o.id).changes;
+        for (const o of await q.pendingUnassigned.all()) n += (await q.assign.run(worker.id, worker.generation, now(), o.id)).changes;
         return n;
     }
 
@@ -278,9 +278,9 @@ function createOutputs({ db, config, events, clock, box, definitions, sessions }
      * is still assigned to that worker: a worker the coordinator has given up (lost) or that handed
      * the output over must not overwrite what the new owner does.
      */
-    function report(outputId, change, { workerId } = {}) {
-        return db.transaction(() => {
-            const o = q.getOut.get(outputId);
+    async function report(outputId, change, { workerId } = {}) {
+        return await db.tx(async () => {
+            const o = await q.getOut.get(outputId);
             if (!o) return null;
             if (workerId && o.worker_id !== workerId) return null;
             const set = { updated_at: now() };
@@ -290,13 +290,13 @@ function createOutputs({ db, config, events, clock, box, definitions, sessions }
             if (change.progress !== undefined) set.progress = change.progress ? JSON.stringify(change.progress) : null;
             if (change.state === 'live') set.ever_live = 1;
             const cols = Object.keys(set);
-            db.prepare(`UPDATE outputs SET ${cols.map(c => `${c} = @${c}`).join(', ')} WHERE id = @id`).run({ ...set, id: outputId });
-            const after = q.getOut.get(outputId);
+            await db.prepare(`UPDATE outputs SET ${cols.map(c => `${c} = @${c}`).join(', ')} WHERE id = @id`).run({ ...set, id: outputId });
+            const after = await q.getOut.get(outputId);
             if (change.state && change.state !== o.state && (change.state === 'live' || change.state === 'failed')) {
-                const dest = q.getDest.get(o.destination_id);
-                const session = sessions.get(o.session_id);
+                const dest = await q.getDest.get(o.destination_id);
+                const session = await sessions.get(o.session_id);
                 if (dest && session) {
-                    events.enqueue({
+                    await events.enqueue({
                         event_type: change.state === 'live' ? TYPES.outputHealthy : TYPES.outputFailed,
                         actor: { type: 'service', id: 'openre' },
                         subject: { type: 'output', id: o.id, revision: after.restart_attempts + 1 },
@@ -315,43 +315,43 @@ function createOutputs({ db, config, events, clock, box, definitions, sessions }
                 }
             }
             return after;
-        })();
+        });
     }
 
-    function log(outputId, destinationId, level, message) {
+    async function log(outputId, destinationId, level, message) {
         const text = String(message || '').slice(0, 500);
-        q.insertLog.run(outputId || null, destinationId, level, text, now());
-        q.pruneLogs.run(destinationId, outputId || null, outputId || null, config.outputs.logsPerOutput);
+        await q.insertLog.run(outputId || null, destinationId, level, text, now());
+        await q.pruneLogs.run(destinationId, outputId || null, outputId || null, config.outputs.logsPerOutput);
     }
 
     return {
         PLATFORMS, QUALITY_PRESETS, ENCODER_PRESETS,
         publicDest,
         publicOutput,
-        getDestination: (id) => (isId('destination', id) ? publicDest(q.getDest.get(id)) : null),
-        destinationRow: (id) => q.getDest.get(id),
-        destinations: (definitionId) => q.destsOf.all(definitionId).map(publicDest),
+        getDestination: async (id) => (isId('destination', id) ? publicDest(await q.getDest.get(id)) : null),
+        destinationRow: async (id) => await q.getDest.get(id),
+        destinations: async (definitionId) => (await q.destsOf.all(definitionId)).map(publicDest),
         createDestination,
         updateDestination,
         deleteDestination,
         destinationForWorker,
         markDestinationFailure,
         clearDestinationCooldown,
-        getOutput: (id) => (isId('output', id) ? publicOutput(q.getOut.get(id)) : null),
-        outputRow: (id) => q.getOut.get(id),
-        outputsOfSession: (sessionId) => q.outsOfSession.all(sessionId).map(publicOutput),
+        getOutput: async (id) => (isId('output', id) ? publicOutput(await q.getOut.get(id)) : null),
+        outputRow: async (id) => await q.getOut.get(id),
+        outputsOfSession: async (sessionId) => (await q.outsOfSession.all(sessionId)).map(publicOutput),
         ensureAutoOutputs,
         startDestination,
         stopDestination,
         assignPending,
-        forWorker: (workerId) => q.forWorker.all(workerId),
-        release: (workerId) => q.release.run(now(), workerId).changes,
-        unassign: (outputId) => q.unassign.run(now(), outputId).changes,
-        stopOrphans: () => q.stopOrphans.run(now(), now()).changes,
+        forWorker: async (workerId) => await q.forWorker.all(workerId),
+        release: async (workerId) => (await q.release.run(now(), workerId)).changes,
+        unassign: async (outputId) => (await q.unassign.run(now(), outputId)).changes,
+        stopOrphans: async () => (await q.stopOrphans.run(now(), now())).changes,
         report,
         log,
-        logsOfOutput: (id, limit = 100) => q.logsOfOutput.all(id, limit),
-        logsOfDestination: (id, limit = 100) => q.logsOfDest.all(id, limit),
+        logsOfOutput: async (id, limit = 100) => await q.logsOfOutput.all(id, limit),
+        logsOfDestination: async (id, limit = 100) => await q.logsOfDest.all(id, limit),
     };
 }
 

@@ -15,7 +15,8 @@
  *   bind      OPENRE_RTMP_BIND is public and the RTMP port really listens on a public address
  *   dns       the ingest host resolves (A/AAAA) only to this host's addresses
  *   port      the ingest port answers an RTMP handshake from outside (see "port" below)
- *   db        PRAGMA integrity_check and foreign_key_check of openre.db (opened read-only)
+ *   db        OpenRe's PostgreSQL database (DATABASE_URL of openre.env, one READ ONLY transaction): no data
+ *             checksum failure, no foreign key left unvalidated, the main tables' counts
  *   live-env  /etc/openvibe/live.env has OPENRE_URL, OPENRE_EVENTS_SECRET (32+ chars) and
  *             OV_OAUTH_CLIENT_SECRET, and the running Live process was started with them
  *   events    Events has Live's openre.session.* subscription to /internal/openre-events, enabled,
@@ -27,7 +28,10 @@
  * that is not the host (a checkout with `npm ci` is enough), or pass --probe-url with a probe you
  * trust (GET, `{host}` and `{port}` replaced, JSON answer with a boolean `open` or `reachable`).
  *
- * Nothing is written anywhere: files and databases are opened read-only, no secret value is
+ * OpenRe and Events serve from PostgreSQL (ADR-035): their databases are read through the DATABASE_URL of their env
+ * files (--openre-db / --events-db take env:<file>, a postgres:// URL or a SQLite file); Live's is still its SQLite file.
+ *
+ * Nothing is written anywhere: files are opened read-only and PostgreSQL is read in READ ONLY transactions, no secret value is
  * printed, the only network traffic is DNS, one GET to /api/ready and one TCP connection with an
  * RTMP handshake (no publish). Exit 0 when no check FAILs (--strict: also no WARN/MANUAL).
  */
@@ -43,8 +47,8 @@ const DEFAULTS = Object.freeze({
     root: '/opt/openre.stream',
     openreEnv: '/etc/openvibe/openre.env',
     liveEnv: '/etc/openvibe/live.env',
-    openreDb: '/var/lib/openre/openre.db',
-    eventsDb: '/var/lib/openvibe-events/events.db',
+    openreDb: 'env:/etc/openvibe/openre.env',
+    eventsDb: 'env:/etc/openvibe/events.env',
     liveDb: '/opt/openvibe.live/data/live.db',
     api: 'http://127.0.0.1:4500',
     openreUrl: 'http://127.0.0.1:4500',
@@ -134,17 +138,44 @@ function realDeps() {
         interfaces: () => os.networkInterfaces(),
         probe: rtmpProbe,
         fetch: (url, opts) => fetch(url, opts),
-        openDb: (p) => {
+        openDb: (target) => {
+            if (/^postgres(ql)?:\/\//.test(target)) {
+                const silent = { log() {}, info() {}, warn() {}, error() {} };
+                return require('openvibe-sdk/db').createDb({ url: target, service: 'openre-preflight', max: 1, log: silent });
+            }
             const Database = require('better-sqlite3');
-            return new Database(p, { readonly: true, fileMustExist: true });
+            return new Database(target, { readonly: true, fileMustExist: true });
         },
     };
 }
 
-function withDb(deps, file, fn) {
+/**
+ * fn(db, kind) on a read-only handle. `target`: env:<file> (that file's DATABASE_URL, never printed), a postgres:// URL
+ * or a SQLite file. PostgreSQL is read in one READ ONLY transaction (a write fails); SQLite is opened read-only.
+ */
+async function withDb(deps, target, fn) {
+    let where = String(target);
     let db;
-    try { db = deps.openDb(file); } catch (err) { return { error: `cannot open ${file} read-only: ${err.message}` }; }
-    try { return fn(db); } finally { try { db.close(); } catch { /* read-only */ } }
+    try {
+        let url = where;
+        if (where.startsWith('env:')) {
+            const file = where.slice(4);
+            where = `the DATABASE_URL of ${file}`;
+            const env = parseEnvFile(deps.readFile(file));
+            if (!env) return { error: `cannot read ${file}` };
+            if (!env.DATABASE_URL) return { error: `${file} has no DATABASE_URL` };
+            url = env.DATABASE_URL;
+        } else if (/^postgres(ql)?:\/\//.test(where)) where = 'the PostgreSQL URL given';
+        db = await deps.openDb(url);
+    } catch (err) { return { error: `cannot open ${where} read-only: ${err.message}` }; }
+    try {
+        if (typeof db.tx === 'function') {
+            return await db.tx(async () => { await db.exec('SET TRANSACTION READ ONLY'); return await fn(db, 'postgresql'); });
+        }
+        return await fn(db, 'sqlite');
+    } catch (err) {
+        return { error: `${where}: ${err.message}` };
+    } finally { try { await db.close(); } catch { /* read-only */ } }
 }
 
 // ── checks ──────────────────────────────────────────────────────────────────
@@ -191,25 +222,25 @@ async function checkService(ctx) {
     if (res.status !== 200 || body.status !== 'ready') problems.push(`status ${res.status} ${body.status} (${JSON.stringify(body.checks || {})})`);
     if (body.mode === 'drill') problems.push('the API runs in drill mode (OPENRE_DRILL)');
     const workers = Array.isArray(body.workers) ? body.workers : [];
-    const rows = ctx.workerRows || workerRowsFromDb(ctx);
+    const rows = ctx.workerRows || await workerRowsFromDb(ctx);
     for (const kind of WORKER_KINDS) {
-        const ready = workers.filter((w) => w.kind === kind && w.state === 'ready');
+        const ready = await workers.filter((w) => w.kind === kind && w.state === 'ready');
         if (ready.length !== 1) { problems.push(`${ready.length} ready ${kind} workers (want 1)`); continue; }
         const row = rows && rows.find((w) => w.kind === kind && w.generation === ready[0].generation);
         if (ctx.release && row && row.release && row.release !== ctx.release) problems.push(`${kind}#${ready[0].generation} runs release ${row.release}, current is ${ctx.release}: deploy.sh workers`);
     }
-    const draining = workers.filter((w) => w.state === 'draining').map((w) => `${w.kind}#${w.generation}`);
+    const draining = (await workers.filter((w) => w.state === 'draining')).map((w) => `${w.kind}#${w.generation}`);
     if (!body.coordinator || !body.coordinator.lease_valid) problems.push('no valid coordinator lease');
     if (!body.events || !body.events.configured) problems.push('event relay not configured (EVENTS_URL, OV_OAUTH_CLIENT_SECRET)');
     if (problems.length) return ['FAIL', problems.join('; ')];
-    const summary = WORKER_KINDS.map((k) => { const w = workers.find((x) => x.kind === k && x.state === 'ready'); return `${k}#${w.generation}`; }).join(', ');
+    const summary = (await Promise.all(WORKER_KINDS.map(async (k) => { const w = await workers.find((x) => x.kind === k && x.state === 'ready'); return `${k}#${w.generation}`; }))).join(', ');
     const pending = body.events && body.events.pending ? `, ${body.events.pending} events waiting in the outbox` : '';
     if (draining.length) return ['WARN', `ready: ${summary}; still draining: ${draining.join(', ')}${pending}`];
     return ['PASS', `ready: ${summary}, coordinator lease valid, event relay on${pending}`];
 }
 
-function workerRowsFromDb(ctx) {
-    const r = withDb(ctx.deps, ctx.opts.openreDb, (db) => db.prepare("SELECT kind, generation, release, state FROM workers WHERE state IN ('starting', 'ready', 'draining')").all());
+async function workerRowsFromDb(ctx) {
+    const r = await withDb(ctx.deps, ctx.opts.openreDb, async (db) => await db.prepare("SELECT kind, generation, release, state FROM workers WHERE state IN ('starting', 'ready', 'draining')").all());
     ctx.workerRows = Array.isArray(r) ? r : null;
     return ctx.workerRows;
 }
@@ -312,20 +343,30 @@ async function checkPort(ctx) {
 }
 
 async function checkDb(ctx) {
-    const r = withDb(ctx.deps, ctx.opts.openreDb, (db) => {
-        const integrity = db.prepare('PRAGMA integrity_check').all().map((x) => Object.values(x)[0]).join('; ');
-        const fk = db.prepare('PRAGMA foreign_key_check').all();
+    const r = await withDb(ctx.deps, ctx.opts.openreDb, async (db, kind) => {
+        let integrity = 'ok';
+        let fk = 0;
+        if (kind === 'sqlite') {
+            integrity = (await db.prepare('PRAGMA integrity_check').all()).map((x) => Object.values(x)[0]).join('; ');
+            fk = (await db.prepare('PRAGMA foreign_key_check').all()).length;
+        } else {
+            // PostgreSQL checks every key on write: what can still be wrong is a data page (checksums) or a key added NOT VALID.
+            const c = await db.prepare('SELECT checksum_failures AS n FROM pg_stat_database WHERE datname = current_database()').get();
+            if (c && Number(c.n) > 0) integrity = `${c.n} data checksum failure(s)`;
+            fk = Number((await db.prepare("SELECT count(*) AS n FROM pg_constraint WHERE contype = 'f' AND NOT convalidated").get()).n);
+        }
         const counts = {};
         for (const t of ['stream_definitions', 'ingest_keys', 'ingest_sessions', 'destinations', 'migration_map']) {
-            try { counts[t] = db.prepare(`SELECT count(*) AS n FROM ${t}`).get().n; } catch { counts[t] = null; }
+            try { counts[t] = (await db.prepare(`SELECT count(*) AS n FROM ${t}`).get()).n; } catch { counts[t] = null; }
         }
-        return { integrity, fk: fk.length, counts };
+        return { integrity, fk, kind, counts };
     });
     if (r.error) return ['FAIL', r.error];
     const counts = Object.entries(r.counts).map(([k, v]) => `${k} ${v == null ? '?' : v}`).join(', ');
-    if (r.integrity !== 'ok') return ['FAIL', `integrity_check = ${r.integrity.slice(0, 300)}`];
-    if (r.fk) return ['FAIL', `integrity_check ok, but ${r.fk} foreign key violation(s)`];
-    return ['PASS', `integrity_check ok, no foreign key violations (${counts})`];
+    const what = r.kind === 'sqlite' ? 'integrity_check' : 'PostgreSQL data checksums';
+    if (r.integrity !== 'ok') return ['FAIL', `${what} = ${r.integrity.slice(0, 300)}`];
+    if (r.fk) return ['FAIL', `${what} ok, but ${r.fk} foreign key ${r.kind === 'sqlite' ? 'violation(s)' : 'constraint(s) not validated'}`];
+    return ['PASS', `${what} ok, no foreign key ${r.kind === 'sqlite' ? 'violations' : 'left unvalidated'} (${counts})`];
 }
 
 async function checkLiveEnv(ctx) {
@@ -360,10 +401,10 @@ async function checkLiveEnv(ctx) {
 async function checkEvents(ctx) {
     const { opts } = ctx;
     const env = liveEnv(ctx) || {};
-    const r = withDb(ctx.deps, opts.eventsDb, (db) => {
-        const subs = db.prepare("SELECT id, enabled, secret FROM subscriptions WHERE consumer = 'live' AND topic_pattern = ? AND endpoint = ?").all(opts.topic, opts.endpoint);
-        const dead = subs.length ? db.prepare("SELECT count(*) AS n FROM deliveries WHERE subscription_id = ? AND status = 'dead'").get(subs[0].id).n : 0;
-        const pending = subs.length ? db.prepare("SELECT count(*) AS n FROM deliveries WHERE subscription_id = ? AND status IN ('pending', 'failed')").get(subs[0].id).n : 0;
+    const r = await withDb(ctx.deps, opts.eventsDb, async (db) => {
+        const subs = await db.prepare("SELECT id, enabled, secret FROM subscriptions WHERE consumer = 'live' AND topic_pattern = ? AND endpoint = ?").all(opts.topic, opts.endpoint);
+        const dead = subs.length ? (await db.prepare("SELECT count(*) AS n FROM deliveries WHERE subscription_id = ? AND status = 'dead'").get(subs[0].id)).n : 0;
+        const pending = subs.length ? (await db.prepare("SELECT count(*) AS n FROM deliveries WHERE subscription_id = ? AND status IN ('pending', 'failed')").get(subs[0].id)).n : 0;
         return { subs, dead, pending };
     });
     if (r.error) return ['FAIL', r.error];
@@ -382,22 +423,22 @@ async function checkEvents(ctx) {
 async function checkSlot(ctx) {
     const { opts } = ctx;
     const id = Number(opts.slot);
-    const live = withDb(ctx.deps, opts.liveDb, (db) => {
-        const slot = db.prepare('SELECT id, user_id, slug, title, protocol, streaming_method, ingest_authority, openre_stream_id FROM managed_streams WHERE id = ?').get(id);
+    const live = await withDb(ctx.deps, opts.liveDb, async (db) => {
+        const slot = await db.prepare('SELECT id, user_id, slug, title, protocol, streaming_method, ingest_authority, openre_stream_id FROM managed_streams WHERE id = ?').get(id);
         if (!slot) return { slot: null };
-        const liveNow = db.prepare('SELECT id FROM streams WHERE managed_stream_id = ? AND is_live = 1 LIMIT 1').get(id);
-        const subject = db.prepare("SELECT subject_id FROM linked_accounts WHERE service = 'network' AND user_id = ?").get(slot.user_id);
-        const user = db.prepare('SELECT username, is_banned FROM users WHERE id = ?').get(slot.user_id);
+        const liveNow = await db.prepare('SELECT id FROM streams WHERE managed_stream_id = ? AND is_live = 1 LIMIT 1').get(id);
+        const subject = await db.prepare("SELECT subject_id FROM linked_accounts WHERE service = 'network' AND user_id = ?").get(slot.user_id);
+        const user = await db.prepare('SELECT username, is_banned FROM users WHERE id = ?').get(slot.user_id);
         return { slot, liveNow, subject: subject && subject.subject_id, user };
     });
     if (live.error) return ['FAIL', live.error];
     if (!live.slot) return ['FAIL', `Live has no managed stream ${id}`];
     const s = live.slot;
-    const openre = withDb(ctx.deps, opts.openreDb, (db) => {
-        const defs = db.prepare("SELECT d.id, d.state, d.mirror_to_live FROM external_refs r JOIN stream_definitions d ON d.id = r.definition_id WHERE r.service = 'live' AND r.type = 'managed_stream' AND r.ref_id = ?").all(String(id));
-        const map = db.prepare("SELECT source_type, status, reason FROM migration_map WHERE source_system = 'live' AND ((source_type = 'managed_stream' AND source_id = ?) OR source_type = 'restream_destination')").all(String(id));
-        const dests = defs.length ? db.prepare('SELECT enabled, hold_reason FROM destinations WHERE definition_id = ?').all(defs[0].id) : [];
-        const openSessions = defs.length ? db.prepare("SELECT count(*) AS n FROM ingest_sessions WHERE definition_id = ? AND state IN ('starting', 'live', 'ending')").get(defs[0].id).n : 0;
+    const openre = await withDb(ctx.deps, opts.openreDb, async (db) => {
+        const defs = await db.prepare("SELECT d.id, d.state, d.mirror_to_live FROM external_refs r JOIN stream_definitions d ON d.id = r.definition_id WHERE r.service = 'live' AND r.type = 'managed_stream' AND r.ref_id = ?").all(String(id));
+        const map = await db.prepare("SELECT source_type, status, reason FROM migration_map WHERE source_system = 'live' AND ((source_type = 'managed_stream' AND source_id = ?) OR source_type = 'restream_destination')").all(String(id));
+        const dests = defs.length ? await db.prepare('SELECT enabled, hold_reason FROM destinations WHERE definition_id = ?').all(defs[0].id) : [];
+        const openSessions = defs.length ? (await db.prepare("SELECT count(*) AS n FROM ingest_sessions WHERE definition_id = ? AND state IN ('starting', 'live', 'ending')").get(defs[0].id)).n : 0;
         return { defs, slotMap: map.find((m) => m.source_type === 'managed_stream') || null, dests, openSessions };
     });
     if (openre.error) return ['FAIL', openre.error];
@@ -481,4 +522,4 @@ if (require.main === module) {
     }, (err) => { console.error(`cutover-preflight: ${err.stack || err}`); process.exit(2); });
 }
 
-module.exports = { preflight, parseArgs, format, parseEnvFile, parseSsListeners, localAddresses, rtmpProbe, sameSecret, CHECKS, DEFAULTS };
+module.exports = { preflight, parseArgs, format, parseEnvFile, parseSsListeners, localAddresses, rtmpProbe, sameSecret, withDb, CHECKS, DEFAULTS };

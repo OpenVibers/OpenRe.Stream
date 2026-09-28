@@ -2,7 +2,7 @@
 /**
  * OpenRe → OpenVibe.Events through the openvibe-sdk transactional outbox (ADR-004).
  *
- * Every OpenRe process can enqueue (the row commits in the same SQLite transaction as the change
+ * Every OpenRe process can enqueue (the row commits in the same transaction as the change
  * it describes); only the session coordinator runs the relay that publishes rows with OpenRe's
  * service token (audience openvibe.events, capability events.event.publish). Events down, Network
  * down or no credentials yet: rows wait and are retried; nothing in the transport path waits.
@@ -19,7 +19,7 @@
  */
 const { createClient } = require('openvibe-sdk/core');
 const { createServiceTokenClient } = require('openvibe-sdk/auth');
-const { createEventsClient, createOutbox } = require('openvibe-sdk/events');
+const { createEventsClient, createPgOutbox } = require('openvibe-sdk/events');
 
 const TYPES = Object.freeze({
     sessionStarted: 'openre.session.started',
@@ -58,7 +58,7 @@ function createEvents({ config, db, fetchImpl = globalThis.fetch, now = () => Da
     });
     const eventsClient = createEventsClient(client, { source: 'openre' });
     let lastError = null;
-    const outbox = createOutbox(db, {
+    const outbox = createPgOutbox(db, {
         events: eventsClient,
         intervalMs: config.events.intervalMs,
         now,
@@ -68,15 +68,15 @@ function createEvents({ config, db, fetchImpl = globalThis.fetch, now = () => Da
             lastError = msg;
         },
     });
-    outbox.ensureSchema();
 
     return {
         outbox,
         configured,
-        enqueue: (envelope) => outbox.enqueue(envelope),
+        // Joins the caller's transaction (the SDK handle is ambient): the row commits with the change it describes.
+        enqueue: async (envelope) => await outbox.enqueue(db, envelope),
         start() { if (configured) outbox.start(); return configured; },
         stop: () => outbox.stop(),
-        status: () => ({ configured, pending: outbox.pending(), rejected: outbox.rejected(), last_error: lastError }),
+        status: async () => ({ configured, pending: await outbox.pending(), rejected: await outbox.rejected(), last_error: lastError }),
     };
 }
 

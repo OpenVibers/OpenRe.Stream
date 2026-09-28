@@ -25,14 +25,14 @@ async function setup({ media: mediaHandler, recording_mode = 'vod' }) {
     const calls = [];
     const media = await stub((req, res, body) => { calls.push({ method: req.method, url: req.url, body, auth: req.headers.authorization }); mediaHandler(req, res, body, calls); });
     const clock = manualClock();
-    const rt = runtime({ clock, env: { MEDIA_URL: media.url, MEDIA_API_KEY: 'k-live', OPENRE_RECORDING_START_DELAY_MS: '0' } });
+    const rt = await runtime({ clock, env: { MEDIA_URL: media.url, MEDIA_API_KEY: 'k-live', OPENRE_RECORDING_START_DELAY_MS: '0' } });
     const client = createMediaClient({ config: rt.config });
     const coordinator = createCoordinator({ rt, media: client, log: silent });
-    const { definition, key } = rt.store.definitions.create({ owner_subject: OWNER, title: 'Rec', recording_mode, external_refs: [{ service: 'live', type: 'user', id: '8' }] });
-    const w = rt.store.workers.register({ kind: 'rtmp-ingest', endpoints: { rtmpPlayPort: 19390, flvPort: 19391 } });
-    rt.store.workers.ready(w.id);
-    const a = rt.store.sessions.admit({ definition, key, protocol: 'rtmp', worker: rt.store.workers.get(w.id) });
-    rt.store.sessions.transition(a.session.id, 'live');
+    const { definition, key } = await rt.store.definitions.create({ owner_subject: OWNER, title: 'Rec', recording_mode, external_refs: [{ service: 'live', type: 'user', id: '8' }] });
+    const w = await rt.store.workers.register({ kind: 'rtmp-ingest', endpoints: { rtmpPlayPort: 19390, flvPort: 19391 } });
+    await rt.store.workers.ready(w.id);
+    const a = await rt.store.sessions.admit({ definition, key, protocol: 'rtmp', worker: await rt.store.workers.get(w.id) });
+    await rt.store.sessions.transition(a.session.id, 'live');
     return { rt, clock, coordinator, session: a.session, calls, media };
 }
 
@@ -52,12 +52,12 @@ t('a live session gets one recording request; finalize when it ends (Media final
     assert.strictEqual(calls[0].body.user_id, 8);
     assert.strictEqual(calls[0].body.visibility, 'public');
     assert.strictEqual(calls[1].body.rtmp_url, `rtmp://127.0.0.1:19390/live/${session.id}`);
-    assert.strictEqual(rt.store.recordings.bySession(session.id).state, 'recording');
-    assert.deepStrictEqual(outboxTypes(rt.db).filter(x => x.startsWith('openre.recording')), ['openre.recording.requested']);
-    rt.store.sessions.finish(session.id, { reason: 'publisher_disconnected' });
+    assert.strictEqual((await rt.store.recordings.bySession(session.id)).state, 'recording');
+    assert.deepStrictEqual((await outboxTypes(rt.db)).filter(x => x.startsWith('openre.recording')), ['openre.recording.requested']);
+    await rt.store.sessions.finish(session.id, { reason: 'publisher_disconnected' });
     await coordinator.tick();
     assert.strictEqual(calls.pop().url, '/api/v1/live/vods/501/finalize');
-    assert.strictEqual(rt.store.recordings.bySession(session.id).state, 'finalized');
+    assert.strictEqual((await rt.store.recordings.bySession(session.id)).state, 'finalized');
     await media.close();
 });
 
@@ -73,15 +73,15 @@ t('Media refusing for disk space: the empty VOD shell is deleted and the request
     });
     await coordinator.tick();
     assert.deepStrictEqual(calls.map(c => c.method), ['POST', 'POST', 'DELETE'], 'create, ingest refused, shell deleted');
-    const rec = rt.store.recordings.bySession(session.id);
+    const rec = await rt.store.recordings.bySession(session.id);
     assert.strictEqual(rec.state, 'pending');
     assert.match(rec.last_error, /Disk/);
     assert.ok(rec.next_attempt_at >= clock.now() + 5 * 60 * 1000, 'disk refusals wait five minutes');
     refuse = false;
     clock.advance(5 * 60 * 1000 + 1);
-    rt.store.workers.heartbeat(session.worker_id); // the ingest worker is alive throughout
+    await rt.store.workers.heartbeat(session.worker_id); // the ingest worker is alive throughout
     await coordinator.tick();
-    assert.strictEqual(rt.store.recordings.bySession(session.id).state, 'recording');
+    assert.strictEqual((await rt.store.recordings.bySession(session.id)).state, 'recording');
     await media.close();
 });
 
@@ -96,16 +96,16 @@ t('clips-only recordings are deleted after finalising; a session that ends first
     });
     await coordinator.tick();
     assert.strictEqual(calls[0].body.clips_only, true);
-    rt.store.sessions.finish(session.id, { reason: 'x' });
+    await rt.store.sessions.finish(session.id, { reason: 'x' });
     await coordinator.tick();
     assert.deepStrictEqual(calls.slice(-2).map(c => `${c.method} ${c.url}`), ['POST /api/v1/live/vods/700/finalize', 'DELETE /api/v1/live/vods/700']);
     await media.close();
 
     const s2 = await setup({ media: (req, res) => reply(res, 500) });
-    s2.rt.store.sessions.finish(s2.session.id, { reason: 'gone' });
-    s2.rt.db.prepare("INSERT INTO recordings (id, session_id, mode, state, created_at, updated_at) VALUES ('rec_01J0000000000000000000000A', ?, 'vod', 'pending', 0, 0)").run(s2.session.id);
+    await s2.rt.store.sessions.finish(s2.session.id, { reason: 'gone' });
+    await s2.rt.db.prepare("INSERT INTO recordings (id, session_id, mode, state, created_at, updated_at) VALUES ('rec_01J0000000000000000000000A', ?, 'vod', 'pending', 0, 0)").run(s2.session.id);
     await s2.coordinator.tick();
-    assert.strictEqual(s2.rt.store.recordings.bySession(s2.session.id).state, 'cancelled');
+    assert.strictEqual((await s2.rt.store.recordings.bySession(s2.session.id)).state, 'cancelled');
     assert.strictEqual(s2.calls.length, 0);
     await s2.media.close();
 });
@@ -127,29 +127,29 @@ t('the relay publishes outbox rows with a Network service token; Events down mea
         assert.strictEqual(p.get('audience'), 'openvibe.events');
         reply(res, 200, { access_token: 'svc-token', token_type: 'Bearer', expires_in: 300 });
     });
-    const rt = runtime({ env: { EVENTS_URL: events.url, OV_NETWORK_INTERNAL_URL: network.url, OV_OAUTH_CLIENT_SECRET: 's3cret' } });
+    const rt = await runtime({ env: { EVENTS_URL: events.url, OV_NETWORK_INTERNAL_URL: network.url, OV_OAUTH_CLIENT_SECRET: 's3cret' } });
     assert.strictEqual(rt.events.configured, true);
-    const { definition } = rt.store.definitions.create({ owner_subject: OWNER });
-    rt.store.definitions.rotateKey(definition.id, { rotated_by: OWNER });
+    const { definition } = await rt.store.definitions.create({ owner_subject: OWNER });
+    await rt.store.definitions.rotateKey(definition.id, { rotated_by: OWNER });
     await rt.events.outbox.flush();
-    assert.strictEqual(rt.events.outbox.pending(), 1, 'kept while Events is down');
+    assert.strictEqual(await rt.events.outbox.pending(), 1, 'kept while Events is down');
     down = false;
-    rt.db.prepare('UPDATE event_outbox SET next_attempt_at = 0').run();
+    await rt.db.prepare('UPDATE event_outbox SET next_attempt_at = 0').run();
     await rt.events.outbox.flush();
-    assert.strictEqual(rt.events.outbox.pending(), 0);
+    assert.strictEqual(await rt.events.outbox.pending(), 0);
     assert.strictEqual(got[0].event_type, 'openre.key.rotated');
     assert.strictEqual(got[0].source, 'openre');
     await events.close();
     await network.close();
 });
 
-t('without EVENTS_URL the relay is off but every row is still written with its change', () => {
-    const rt = runtime();
+t('without EVENTS_URL the relay is off but every row is still written with its change', async () => {
+    const rt = await runtime();
     assert.strictEqual(rt.events.configured, false);
     assert.strictEqual(rt.events.start(), false);
-    const { definition } = rt.store.definitions.create({ owner_subject: OWNER });
-    rt.store.definitions.rotateKey(definition.id);
-    assert.strictEqual(rt.events.status().pending, 1);
+    const { definition } = await rt.store.definitions.create({ owner_subject: OWNER });
+    await rt.store.definitions.rotateKey(definition.id);
+    assert.strictEqual((await rt.events.status()).pending, 1);
 });
 
 t.run();

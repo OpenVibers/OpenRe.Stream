@@ -45,13 +45,13 @@ function liveSnapshot(dir) {
     return file;
 }
 
-t('dry run writes nothing', () => {
+t('dry run writes nothing', async () => {
     const dir = tmpDir();
-    const rt = runtime({ dir });
+    const rt = await runtime({ dir });
     const live = new Database(liveSnapshot(dir), { readonly: true });
-    const report = migrate({ liveDb: live, rt, apply: false });
-    assert.strictEqual(rt.db.prepare('SELECT COUNT(*) AS n FROM stream_definitions').get().n, 0);
-    assert.strictEqual(rt.db.prepare('SELECT COUNT(*) AS n FROM migration_map').get().n, 0);
+    const report = await migrate({ liveDb: live, rt, apply: false });
+    assert.strictEqual((await rt.db.prepare('SELECT COUNT(*) AS n FROM stream_definitions').get()).n, 0);
+    assert.strictEqual((await rt.db.prepare('SELECT COUNT(*) AS n FROM migration_map').get()).n, 0);
     assert.ok(report.counts.imported > 0);
     assert.match(checklist(report), /dry run/);
 });
@@ -59,17 +59,17 @@ t('dry run writes nothing', () => {
 let dir;
 let rt;
 let liveFile;
-t('apply: slots with a subject are imported with new keys; the rest are held or excluded with reasons', () => {
+t('apply: slots with a subject are imported with new keys; the rest are held or excluded with reasons', async () => {
     dir = tmpDir();
-    rt = runtime({ dir, env: { OPENRE_DEST_ALLOW_PRIVATE: '0' } });
+    rt = await runtime({ dir, env: { OPENRE_DEST_ALLOW_PRIVATE: '0' } });
     liveFile = liveSnapshot(dir);
     const before = fs.readFileSync(liveFile);
     const live = new Database(liveFile, { readonly: true });
-    const report = migrate({ liveDb: live, rt, apply: true });
+    const report = await migrate({ liveDb: live, rt, apply: true });
     live.close();
     assert.ok(before.equals(fs.readFileSync(liveFile)), 'the Live snapshot is untouched');
 
-    const map = Object.fromEntries(rt.db.prepare('SELECT source_type, source_id, status, reason, target_id FROM migration_map').all().map(r => [`${r.source_type}:${r.source_id}`, r]));
+    const map = Object.fromEntries((await rt.db.prepare('SELECT source_type, source_id, status, reason, target_id FROM migration_map').all()).map(r => [`${r.source_type}:${r.source_id}`, r]));
     assert.strictEqual(map['managed_stream:10'].status, 'imported');
     assert.strictEqual(map['managed_stream:11'].status, 'held');
     assert.match(map['managed_stream:11'].reason, /no canonical subject/);
@@ -77,21 +77,21 @@ t('apply: slots with a subject are imported with new keys; the rest are held or 
     assert.strictEqual(map['managed_stream:13'].status, 'imported');
     assert.strictEqual(map['managed_stream:14'].status, 'imported');
 
-    const def10 = rt.store.definitions.get(map['managed_stream:10'].target_id);
+    const def10 = await rt.store.definitions.get(map['managed_stream:10'].target_id);
     assert.strictEqual(def10.owner_subject, SUBJECT_A);
     assert.strictEqual(def10.recording_visibility, 'unlisted', 'from the channel default');
     assert.strictEqual(def10.recording_mode, 'vod');
     assert.deepStrictEqual(def10.external_refs.map(r => `${r.service}:${r.type}:${r.id}`), ['live:managed_stream:10', 'live:user:1']);
-    assert.strictEqual(rt.store.definitions.get(map['managed_stream:13'].target_id).recording_mode, 'none', 'VOD off on the channel, clips off on the slot');
-    assert.strictEqual(rt.store.definitions.get(map['managed_stream:14'].target_id).recording_mode, 'clips');
-    assert.strictEqual(rt.store.definitions.get(map['managed_stream:14'].target_id).recording_visibility, 'private');
+    assert.strictEqual((await rt.store.definitions.get(map['managed_stream:13'].target_id)).recording_mode, 'none', 'VOD off on the channel, clips off on the slot');
+    assert.strictEqual((await rt.store.definitions.get(map['managed_stream:14'].target_id)).recording_mode, 'clips');
+    assert.strictEqual((await rt.store.definitions.get(map['managed_stream:14'].target_id)).recording_visibility, 'private');
 
     // Old keys: none of them authenticates, and none is stored in any form.
     for (const old of ['a3f9c2leakedkey0000000000000000000000000', 'personalkey111']) {
-        assert.strictEqual(rt.db.prepare('SELECT COUNT(*) AS n FROM ingest_keys WHERE key_hash = ?').get(hashIngestKey(old)).n, 0);
-        assert.ok(rt.store.definitions.resolveIngestKey(old, 'rtmp').error);
+        assert.strictEqual((await rt.db.prepare('SELECT COUNT(*) AS n FROM ingest_keys WHERE key_hash = ?').get(hashIngestKey(old))).n, 0);
+        assert.ok((await rt.store.definitions.resolveIngestKey(old, 'rtmp')).error);
     }
-    assert.strictEqual(rt.db.prepare("SELECT COUNT(*) AS n FROM ingest_keys WHERE status = 'active'").get().n, 3, 'one new key per imported slot');
+    assert.strictEqual((await rt.db.prepare("SELECT COUNT(*) AS n FROM ingest_keys WHERE status = 'active'").get()).n, 3, 'one new key per imported slot');
 
     // Destinations: sealed, LAN one held, OAuth-linked flagged, unbound one held (two slots).
     assert.strictEqual(map['restream_destination:100'].status, 'imported');
@@ -100,13 +100,13 @@ t('apply: slots with a subject are imported with new keys; the rest are held or 
     assert.match(map['restream_destination:102'].reason, /private/);
     assert.strictEqual(map['restream_destination:103'].status, 'held');
     assert.match(map['restream_destination:103'].reason, /several slots/);
-    const d100 = rt.store.outputs.destinationForWorker(map['restream_destination:100'].target_id);
+    const d100 = await rt.store.outputs.destinationForWorker(map['restream_destination:100'].target_id);
     assert.strictEqual(d100.stream_key, 'live_twitchsecret_1');
-    assert.ok(!JSON.stringify(rt.db.prepare('SELECT * FROM destinations').all()).includes('live_twitchsecret_1'), 'sealed at rest');
-    const d101 = rt.store.outputs.getDestination(map['restream_destination:101'].target_id);
+    assert.ok(!JSON.stringify(await rt.db.prepare('SELECT * FROM destinations').all()).includes('live_twitchsecret_1'), 'sealed at rest');
+    const d101 = await rt.store.outputs.getDestination(map['restream_destination:101'].target_id);
     assert.strictEqual(d101.auto_start, false);
     assert.strictEqual(d101.custom_video_bitrate, 4500);
-    const d102 = rt.store.outputs.getDestination(map['restream_destination:102'].target_id);
+    const d102 = await rt.store.outputs.getDestination(map['restream_destination:102'].target_id);
     assert.strictEqual(d102.enabled, false);
     assert.ok(d102.hold_reason);
 
@@ -118,32 +118,32 @@ t('apply: slots with a subject are imported with new keys; the rest are held or 
     for (const secret of ['a3f9c2leakedkey', 'live_twitchsecret_1', 'yt-secret-2222', 'personalkey111', 'kick-secret-44']) assert.ok(!md.includes(secret), `no ${secret} in the checklist`);
 });
 
-t('re-running is idempotent; a held slot is imported once its user has a subject', () => {
-    const counts = () => ({
-        defs: rt.db.prepare('SELECT COUNT(*) AS n FROM stream_definitions').get().n,
-        dests: rt.db.prepare('SELECT COUNT(*) AS n FROM destinations').get().n,
-        keys: rt.db.prepare('SELECT COUNT(*) AS n FROM ingest_keys').get().n,
+t('re-running is idempotent; a held slot is imported once its user has a subject', async () => {
+    const counts = async () => ({
+        defs: (await rt.db.prepare('SELECT COUNT(*) AS n FROM stream_definitions').get()).n,
+        dests: (await rt.db.prepare('SELECT COUNT(*) AS n FROM destinations').get()).n,
+        keys: (await rt.db.prepare('SELECT COUNT(*) AS n FROM ingest_keys').get()).n,
     });
-    const before = counts();
+    const before = await counts();
     let live = new Database(liveFile, { readonly: true });
-    const again = migrate({ liveDb: live, rt, apply: true });
+    const again = await migrate({ liveDb: live, rt, apply: true });
     live.close();
-    assert.deepStrictEqual(counts(), before);
+    assert.deepStrictEqual(await counts(), before);
     assert.strictEqual(again.counts.imported, 0);
     const w = new Database(liveFile);
-    w.prepare("INSERT INTO linked_accounts (user_id, service, service_user_id, subject_id) VALUES (2, 'network', '60', 'usr_01J00000000000000000000D01')").run();
+    await w.prepare("INSERT INTO linked_accounts (user_id, service, service_user_id, subject_id) VALUES (2, 'network', '60', 'usr_01J00000000000000000000D01')").run();
     w.close();
     live = new Database(liveFile, { readonly: true });
-    migrate({ liveDb: live, rt, apply: true });
+    await migrate({ liveDb: live, rt, apply: true });
     live.close();
-    assert.strictEqual(counts().defs, before.defs + 1);
-    assert.strictEqual(rt.db.prepare("SELECT status FROM migration_map WHERE source_type = 'managed_stream' AND source_id = '11'").get().status, 'imported');
+    assert.strictEqual((await counts()).defs, before.defs + 1);
+    assert.strictEqual((await rt.db.prepare("SELECT status FROM migration_map WHERE source_type = 'managed_stream' AND source_id = '11'").get()).status, 'imported');
 });
 
-t('the CLI runs a dry run against a snapshot and prints the checklist', () => {
+t('the CLI runs a dry run against a snapshot and prints the checklist', async () => {
     const d = tmpDir();
     const file = liveSnapshot(d);
-    const env = testEnv(d);
+    const env = await testEnv(d);
     const out = execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'migrate-from-live.js'), '--live-db', file], {
         env: { ...process.env, ...env, OPENRE_ENV_FILE: '/nonexistent' }, cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
     });

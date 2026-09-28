@@ -4,11 +4,11 @@
   "code": true,
   "wave": "W7",
   "plan": "OpenVibe End-to-End Realignment & Implementation Plan, revision 3 (20 Sep 2026)",
-  "runtime": "node 22, express, better-sqlite3, node-media-server 2.7.4, ffmpeg",
+  "runtime": "node 22, express, PostgreSQL 18 (openvibe-sdk/db, async) + Valkey 9, node-media-server 2.7.4, ffmpeg",
   "port": 4500,
   "rtmpPort": 1936,
   "domain": "openre.stream",
-  "contracts": "openvibe-contracts v0.49.0 (openvibe-sdk v0.12.0, openvibe-shared v1.25.0)",
+  "contracts": "openvibe-contracts v0.76.0 (openvibe-sdk v0.21.3, openvibe-shared v1.28.0)",
   "protocols": {
     "rtmp": "ingest ported (openre-rtmp-ingest)",
     "restream": "RTMP source to RTMP/RTMPS/SRT destinations ported (openre-restream-worker)",
@@ -16,7 +16,15 @@
     "webrtc-sfu": "not ported (worker interface only)",
     "jsmpeg": "not ported (worker interface only)"
   },
-  "capabilities": ["openre.stream.read", "openre.stream.write", "openre.key.rotate", "openre.session.read", "openre.session.end", "openre.output.read", "openre.output.write"],
+  "capabilities": [
+    "openre.stream.read",
+    "openre.stream.write",
+    "openre.key.rotate",
+    "openre.session.read",
+    "openre.session.end",
+    "openre.output.read",
+    "openre.output.write"
+  ],
   "capabilitiesRegistered": true,
   "livePatch": "applied in Live f0ca18b and deployed; Live wired on 2026-09-23 (OPENRE_URL and the openre.session.* subscription, docs/cutover.md phase A); every Live slot keeps ingest_authority=live until its per-slot cutover (phase B), so no broadcaster uses OpenRe yet",
   "deployed": true,

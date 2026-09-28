@@ -5,7 +5,8 @@ Description=OpenRe.Stream RTMP ingest worker, release %i
 # keeps its publishers until they leave (or OPENRE_DRAIN_MAX_MS), and exits 0 by itself.
 # Nothing here depends on openre-api or openre-session-coordinator: an API deploy never restarts
 # this unit. Never `systemctl restart` it during a broadcast; see README "Deploying".
-After=network.target
+After=network.target postgresql.service pgbouncer.service valkey-server.service
+Wants=postgresql.service pgbouncer.service valkey-server.service
 
 [Service]
 Type=simple
@@ -15,6 +16,7 @@ WorkingDirectory=/opt/openre.stream/releases/%i
 EnvironmentFile=/etc/openvibe/openre.env
 Environment=NODE_ENV=production
 Environment=OPENRE_RELEASE=%i
+# The SQLite file the one-time move read (scripts/migrate-to-postgres.js); the store is ov_openre (ADR-035).
 Environment=OPENRE_DB_PATH=/var/lib/openre/openre.db
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/bin/env node workers/rtmp-ingest.js

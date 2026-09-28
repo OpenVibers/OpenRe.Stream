@@ -6,7 +6,7 @@
  * end requests) and serves the UI. Restarting or redeploying it never touches a worker process,
  * a session or an ffmpeg output; see test/api-restart.test.js.
  *
- * start() is what the tests use too: it takes a config plus injectable clock/fetch/log.
+ * start() is what the tests use too: it takes a config plus injectable clock/fetch/log (and a database handle).
  */
 const path = require('path');
 const { load } = require('./config');
@@ -14,9 +14,9 @@ const { openRuntime } = require('./store');
 const { createKeyStore, createAuth } = require('./auth');
 const { createApp } = require('./app');
 
-async function start({ config, clock, fetchImpl = globalThis.fetch, log = console, listen = true } = {}) {
+async function start({ config, clock, fetchImpl = globalThis.fetch, log = console, listen = true, db } = {}) {
     config = config || load();
-    const rt = openRuntime({ config, clock, fetchImpl, log });
+    const rt = await openRuntime({ config, clock, fetchImpl, log, db });
     const keys = createKeyStore({ urls: [config.networkInternalUrl, config.networkUrl], pem: config.networkPublicKey, fetchImpl, log });
     const auth = createAuth({ config, keys });
     const app = createApp({ rt, auth, keys, log, fetchImpl });
@@ -37,7 +37,8 @@ async function start({ config, clock, fetchImpl = globalThis.fetch, log = consol
             server.closeAllConnections?.();
             await new Promise(resolve => server.close(() => resolve()));
         }
-        rt.db.close();
+        if (app.locals.valkey) await app.locals.valkey.close().catch(() => {});
+        await rt.db.close();
     }
 
     return { config, rt, keys, keyLoaded, auth, app, server, close };

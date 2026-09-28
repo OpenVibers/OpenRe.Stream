@@ -37,8 +37,8 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
     };
 
     /** The Live channel this definition belongs to (the resolver's answer), or null while unresolved. */
-    function liveLineage(definitionId) {
-        const row = q.lineage.get(definitionId);
+    async function liveLineage(definitionId) {
+        const row = await q.lineage.get(definitionId);
         const r = row ? parseJson(row.resolution, null) : null;
         if (!r || r.status !== 'resolved' || !r.channel) return null;
         return { channel: { service: 'live', id: String(r.channel.id), slug: r.channel.slug, owner_subject: r.channel.owner_subject || null }, rule: r.rule || null };
@@ -49,11 +49,11 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
         return { ...s, media_info: parseJson(s.media_info, null) };
     }
 
-    function get(id) {
-        return isId('session', id) ? shape(q.get.get(id)) : null;
+    async function get(id) {
+        return isId('session', id) ? shape(await q.get.get(id)) : null;
     }
 
-    function list({ definition_id, owner_subject, state, limit = 50, before } = {}) {
+    async function list({ definition_id, owner_subject, state, limit = 50, before } = {}) {
         const where = [];
         const args = [];
         if (definition_id) { where.push('s.definition_id = ?'); args.push(definition_id); }
@@ -61,13 +61,13 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
         if (state === 'open') where.push(`s.state IN ${OPEN}`);
         else if (state) { where.push('s.state = ?'); args.push(state); }
         if (before) { where.push('s.created_at < ?'); args.push(Number(before)); }
-        return db.prepare(`SELECT s.* FROM ingest_sessions s JOIN stream_definitions d ON d.id = s.definition_id
+        return (await db.prepare(`SELECT s.* FROM ingest_sessions s JOIN stream_definitions d ON d.id = s.definition_id
             ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY s.created_at DESC LIMIT ?`)
-            .all(...args, Math.min(Math.max(Number(limit) || 50, 1), 200)).map(shape);
+            .all(...args, Math.min(Math.max(Number(limit) || 50, 1), 200))).map(shape);
     }
 
-    function envelopeFor(type, session, definition, extra = {}) {
-        const worker = session.worker_id ? workers.get(session.worker_id) : null;
+    async function envelopeFor(type, session, definition, extra = {}) {
+        const worker = session.worker_id ? await workers.get(session.worker_id) : null;
         const payload = {
             session_id: session.id,
             stream_id: definition.id,
@@ -79,7 +79,7 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
             worker: worker ? { id: worker.id, kind: worker.kind, generation: worker.generation } : null,
             external_refs: definition.external_refs,
             mirror_to_live: definition.mirror_to_live,
-            lineage: liveLineage(definition.id),
+            lineage: await liveLineage(definition.id),
             ...extra,
         };
         return {
@@ -93,31 +93,31 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
     }
 
     /**
-     * Admit a publish on `worker` (synchronous; called inside the RTMP handshake).
+     * Admit a publish on `worker` (called inside the RTMP handshake).
      * One open session per definition: a second publisher with a valid key is refused while the
      * first is alive, exactly like Live's in-process ingest. A leftover open session whose lease
      * has expired (its worker died) is failed first, so a crashed worker never locks a stream out.
      */
-    function admit({ definition, key, protocol, worker }) {
-        return db.transaction(() => {
-            for (const open of q.openForDefinition.all(definition.id)) {
+    async function admit({ definition, key, protocol, worker }) {
+        return await db.tx(async () => {
+            for (const open of await q.openForDefinition.all(definition.id)) {
                 const leaseOk = open.lease_expires_at && open.lease_expires_at > now();
                 if (leaseOk) return { error: 'duplicate_publisher', existing: open.id };
-                applyTransition(open, 'failed', { reason: 'lease_expired', actor: `worker:${worker.id}` });
+                await applyTransition(open, 'failed', { reason: 'lease_expired', actor: `worker:${worker.id}` });
             }
             const id = newId('session', now());
-            q.insert.run({
+            await q.insert.run({
                 id, definition_id: definition.id, key_id: key ? key.id : null, protocol,
                 worker_id: worker.id, worker_kind: worker.kind, worker_generation: worker.generation,
                 lease: now() + config.workers.leaseMs, now: now(),
             });
-            q.transitionRow.run(id, null, 'starting', 'publish_accepted', `worker:${worker.id}`, now());
-            return { session: shape(q.get.get(id)) };
-        }).immediate();
+            await q.transitionRow.run(id, null, 'starting', 'publish_accepted', `worker:${worker.id}`, now());
+            return { session: shape(await q.get.get(id)) };
+        });
     }
 
     // Inside a transaction.
-    function applyTransition(current, to, { reason = null, actor = null, media_info } = {}) {
+    async function applyTransition(current, to, { reason = null, actor = null, media_info } = {}) {
         if (!canTransition(current.state, to)) return { ok: false, code: 'invalid_transition', session: shape(current) };
         const t = now();
         const set = { state: to, updated_at: t, revision: current.revision + 1 };
@@ -128,21 +128,21 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
         if (media_info !== undefined) set.media_info = media_info ? JSON.stringify(media_info) : null;
         if (isTerminal(to)) set.lease_expires_at = null;
         const cols = Object.keys(set);
-        db.prepare(`UPDATE ingest_sessions SET ${cols.map(c => `${c} = @${c}`).join(', ')} WHERE id = @id AND state = @from`)
+        await db.prepare(`UPDATE ingest_sessions SET ${cols.map(c => `${c} = @${c}`).join(', ')} WHERE id = @id AND state = @from`)
             .run({ ...set, id: current.id, from: current.state });
-        q.transitionRow.run(current.id, current.state, to, reason, actor, t);
-        const session = shape(q.get.get(current.id));
-        const definition = definitions.row(session.definition_id);
+        await q.transitionRow.run(current.id, current.state, to, reason, actor, t);
+        const session = shape(await q.get.get(current.id));
+        const definition = await definitions.row(session.definition_id);
         if (to === 'live') {
-            events.enqueue(envelopeFor(TYPES.sessionStarted, session, definition, { playback: playback(session) }));
+            await events.enqueue(await envelopeFor(TYPES.sessionStarted, session, definition, { playback: await playback(session) }));
         } else if (to === 'ended' && session.live_at) {
-            events.enqueue(envelopeFor(TYPES.sessionEnded, session, definition, {
+            await events.enqueue(await envelopeFor(TYPES.sessionEnded, session, definition, {
                 ended_at: iso(session.ended_at),
                 duration_seconds: Math.round((session.ended_at - session.live_at) / 1000),
                 end_reason: session.end_reason,
             }));
         } else if (to === 'failed') {
-            events.enqueue(envelopeFor(TYPES.sessionFailed, session, definition, {
+            await events.enqueue(await envelopeFor(TYPES.sessionFailed, session, definition, {
                 ended_at: iso(session.ended_at),
                 was_live: Boolean(session.live_at),
                 duration_seconds: session.live_at ? Math.round((session.ended_at - session.live_at) / 1000) : 0,
@@ -151,45 +151,45 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
         }
         if (isTerminal(to) || to === 'ending') {
             // Outputs follow their session down; they never pull the session with them.
-            db.prepare("UPDATE outputs SET desired = 'stop', updated_at = ? WHERE session_id = ? AND desired = 'run'").run(t, session.id);
+            await db.prepare("UPDATE outputs SET desired = 'stop', updated_at = ? WHERE session_id = ? AND desired = 'run'").run(t, session.id);
         }
         return { ok: true, session };
     }
 
     /** transition(id, to, { reason, actor, media_info }) -> { ok, session } | { ok: false, code } */
-    function transition(id, to, opts = {}) {
-        return db.transaction(() => {
-            const current = q.get.get(id);
+    async function transition(id, to, opts = {}) {
+        return await db.tx(async () => {
+            const current = await q.get.get(id);
             if (!current) return { ok: false, code: 'not_found' };
-            return applyTransition(current, to, opts);
-        }).immediate();
+            return await applyTransition(current, to, opts);
+        });
     }
 
     /** ending → ended in one call (the common clean stop). */
-    function finish(id, { reason, actor } = {}) {
-        return db.transaction(() => {
-            let current = q.get.get(id);
+    async function finish(id, { reason, actor } = {}) {
+        return await db.tx(async () => {
+            let current = await q.get.get(id);
             if (!current) return { ok: false, code: 'not_found' };
             if (current.state === 'starting' || current.state === 'live') {
-                const r = applyTransition(current, 'ending', { reason, actor });
+                const r = await applyTransition(current, 'ending', { reason, actor });
                 if (!r.ok) return r;
-                current = q.get.get(id);
+                current = await q.get.get(id);
             }
-            return applyTransition(current, 'ended', { reason, actor });
-        }).immediate();
+            return await applyTransition(current, 'ended', { reason, actor });
+        });
     }
 
-    function requestEnd(id, by) {
-        return q.requestEnd.run(String(by || 'unknown'), now(), id).changes > 0;
+    async function requestEnd(id, by) {
+        return (await q.requestEnd.run(String(by || 'unknown'), now(), id)).changes > 0;
     }
 
     /**
      * Where to watch a session. Internal URLs are loopback addresses on the OpenRe host (Live and
      * Media run there too); public_url is served by openre-api's /play proxy.
      */
-    function playback(session) {
+    async function playback(session) {
         if (!session) return null;
-        const worker = session.worker_id ? workers.get(session.worker_id) : null;
+        const worker = session.worker_id ? await workers.get(session.worker_id) : null;
         const ep = (worker && worker.endpoints) || {};
         const descriptor = {
             session_id: session.id,
@@ -224,13 +224,13 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
         finish,
         requestEnd,
         playback,
-        setMediaInfo: (id, info) => q.mediaInfo.run(JSON.stringify(info), id).changes > 0,
-        transitions: (id) => q.transitions.all(id),
-        endRequestsFor: (workerId) => q.endRequests.all(workerId).map(shape),
-        ofWorker: (workerId) => q.ofWorker.all(workerId).map(shape),
-        expiredLeases: () => q.expiredLeases.all(now()).map(shape),
-        live: () => q.live.all().map(shape),
-        openFor: (definitionId) => q.openForDefinition.all(definitionId).map(shape),
+        setMediaInfo: async (id, info) => (await q.mediaInfo.run(JSON.stringify(info), id)).changes > 0,
+        transitions: async (id) => await q.transitions.all(id),
+        endRequestsFor: async (workerId) => (await q.endRequests.all(workerId)).map(shape),
+        ofWorker: async (workerId) => (await q.ofWorker.all(workerId)).map(shape),
+        expiredLeases: async () => (await q.expiredLeases.all(now())).map(shape),
+        live: async () => (await q.live.all()).map(shape),
+        openFor: async (definitionId) => (await q.openForDefinition.all(definitionId)).map(shape),
     };
 }
 
