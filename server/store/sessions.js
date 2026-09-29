@@ -2,7 +2,7 @@
 /**
  * Ingest sessions: admission, the state machine, leases and the playback descriptor.
  *
- * Every transition is one SQLite transaction that also writes the session_transitions audit row
+ * Every transition is one serializable PostgreSQL transaction that also writes the session_transitions audit row
  * and, where the transition is externally visible, the outbox event (so the event exists if and
  * only if the change committed). Workers and the coordinator can race on the same session (a
  * publisher leaving while its lease is being expired); whoever commits first wins and the other

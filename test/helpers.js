@@ -80,7 +80,6 @@ async function testEnv(dir, extra = {}) {
         NODE_ENV: 'test',
         PORT: '0',
         ...(t.url ? { DATABASE_URL: t.url, DATABASE_DIRECT_URL: t.directUrl } : { OPENRE_PGLITE_DIR: path.join(dir, 'pglite') }),
-        OPENRE_DB_PATH: path.join(dir, 'openre.db'),
         OPENRE_SECRETS_KEY: SECRETS_KEY,
         OV_NETWORK_PUBLIC_KEY: publicKey,
         OPENRE_DEST_ALLOW_PRIVATE: '1',

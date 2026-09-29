@@ -7,8 +7,8 @@
  *   openre-rtmp-ingest          sessions it admits, their leases and transitions
  *   openre-restream-worker      output state, health and logs
  *
- * Several writer processes were the trigger ADR-007 named for leaving SQLite; every statement lives behind
- * server/store/*, and every transaction there is SERIALIZABLE (store/index.js), as SQLite's one writer made them.
+ * Several writer processes change the same rows; every statement lives behind server/store/*, and every
+ * transaction there is SERIALIZABLE (store/index.js), so PostgreSQL detects a conflict and the SDK retries.
  * The schema is migrations/NNNN_*.sql, applied at boot by the owner role. Times are epoch milliseconds.
  */
 const fs = require('fs');

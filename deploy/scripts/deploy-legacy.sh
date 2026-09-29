@@ -15,7 +15,7 @@
 #
 # Layout: /opt/openre.stream/releases/<sha>/ (full checkout + node_modules), `current` symlink
 # for the API and coordinator, one openre-rtmp-ingest@<sha> / openre-restream-worker@<sha>
-# instance per worker generation. Env: /etc/openvibe/openre.env. Store: /var/lib/openre/openre.db.
+# instance per worker generation. Env: /etc/openvibe/openre.env. Store: ov_openre on PostgreSQL (ADR-035).
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 

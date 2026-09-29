@@ -57,7 +57,7 @@ t('the entry points exit before opening the database', async () => {
         const r = await p.exited;
         assert.strictEqual(r.code, 1, `${script} exit code`);
         assert.match(p.output, /does not run in a restore drill/, script);
-        assert.ok(!fs.existsSync(path.join(dir, 'openre.db')), `${script} must not create or touch the database`);
+        assert.ok(!fs.existsSync(path.join(dir, 'pglite')), `${script} must not create or touch the database`);
     }
 });
 

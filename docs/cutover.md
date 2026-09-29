@@ -46,8 +46,8 @@ Everything below runs on the host. The scripts ship with the release (`scripts/`
 |---|---|---|
 | `cutover-preflight.js` | read-only checks: `release service env bind dns port db live-env events [slot]` (`--only`, `--skip`, `--slot <id>`, `--json`, `--strict`, `--expect-release <sha>`, `--probe-url`, `--host-ip`) | nothing |
 | `subscribe-live-events.js` | Live's Events subscription `openre.session.*` → Live, **as Live** (reads `/etc/openvibe/live.env`); `--dry-run`, `--disable`, `--enable` | one subscription in Events |
-| `migrate-from-live.js` | imports slots and destinations from a Live **snapshot** (dry run unless `--apply`) | `openre.db` |
-| `set-definition-state.js` | disables or re-enables one slot's OpenRe definition, **as Live** (per-slot rollback) | `openre.db` via the API |
+| `migrate-from-live.js` | imports slots and destinations from a Live **snapshot** (dry run unless `--apply`) | the PostgreSQL store (`ov_openre`) |
+| `set-definition-state.js` | disables or re-enables one slot's OpenRe definition, **as Live** (per-slot rollback) | the PostgreSQL store (`ov_openre`) via the API |
 
 Shell helpers for the session (paste once per SSH session):
 
@@ -56,8 +56,7 @@ SHA=<the 12-character release id printed by step A2>
 # read-only preflight from that release
 pf() { sudo node /opt/openre.stream/releases/$SHA/scripts/cutover-preflight.js --expect-release "$SHA" "$@"; }
 # run a command in the current release with OpenRe's production env, AS THE SERVICE USER (ubuntu).
-# Never run a script that opens openre.db as root: root-owned -wal/-shm files lock the service out.
-openre_as_service() { sudo bash -c "set -a; . /etc/openvibe/openre.env; set +a; export NODE_ENV=production OPENRE_DB_PATH=/var/lib/openre/openre.db OPENRE_ENV_FILE=/nonexistent; cd /opt/openre.stream/current && sudo -E -u ubuntu $1"; }
+openre_as_service() { sudo bash -c "set -a; . /etc/openvibe/openre.env; set +a; export NODE_ENV=production OPENRE_ENV_FILE=/nonexistent; cd /opt/openre.stream/current && sudo -E -u ubuntu $1"; }
 DEPLOY=/opt/openre.stream/releases/$SHA/deploy/scripts/deploy.sh
 ```
 
@@ -77,7 +76,7 @@ from this commit onward is on GitHub yet. Undo: nothing to undo.
 ```bash
 sudo /opt/openre.stream/current/deploy/scripts/deploy.sh release origin/main   # prints the new <sha>
 SHA=<that sha>; DEPLOY=/opt/openre.stream/releases/$SHA/deploy/scripts/deploy.sh   # and re-paste pf()
-pf --only db                                  # openre.db is sound before anything restarts
+pf --only db                                  # the PostgreSQL store is sound before anything restarts
 sudo $DEPLOY api $SHA                         # restarts openre-api + openre-session-coordinator ONLY
 curl -s http://127.0.0.1:4500/api/ready       # "status":"ready"
 pf --only release,env,db                      # current = $SHA, it contains 6dc78a5
@@ -219,11 +218,11 @@ refuses that user's personal RTMP key (`refusesLiveIngest`).
      `flv.internal_url`).
    - `await api('/admin/openre/status')` lists the session under `live_sessions`.
    - Sessions and outputs:
-     `sudo sqlite3 -readonly /var/lib/openre/openre.db "SELECT id, state, worker_generation FROM ingest_sessions ORDER BY created_at DESC LIMIT 1; SELECT o.state, o.last_error FROM outputs o ORDER BY o.created_at DESC LIMIT 3; SELECT state, media_vod_id, last_error FROM recordings ORDER BY created_at DESC LIMIT 1;"`
+     `sudo -u ubuntu bash -c "set -a; . /etc/openvibe/openre.env; set +a; psql \"\$DATABASE_URL\" -c \"SELECT id, state, worker_generation FROM ingest_sessions ORDER BY created_at DESC LIMIT 1; SELECT o.state, o.last_error FROM outputs o ORDER BY o.created_at DESC LIMIT 3; SELECT state, media_vod_id, last_error FROM recordings ORDER BY created_at DESC LIMIT 1;\""`
      should show a `live` session, a `live` output and a `recording` recording.
    - The destination (YouTube) shows the stream.
    - Deliveries:
-     `sudo sqlite3 -readonly /var/lib/openvibe-events/events.db "SELECT d.status, count(*) FROM deliveries d JOIN subscriptions s ON s.id = d.subscription_id WHERE s.consumer = 'live' AND s.topic_pattern = 'openre.session.*' GROUP BY 1"`
+     `sudo -u ubuntu bash -c "set -a; . /etc/openvibe/events.env; set +a; psql \"\$DATABASE_URL\" -c \"SELECT d.status, count(*) FROM deliveries d JOIN subscriptions s ON s.id = d.subscription_id WHERE s.consumer = 'live' AND s.topic_pattern = 'openre.session.*' GROUP BY 1\""`
      should all be `delivered`.
 5. **During the broadcast (AGENT):**
    - `sudo $DEPLOY api $SHA`: the stream, the restream and the recording do not drop. OpenRe

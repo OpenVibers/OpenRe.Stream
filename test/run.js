@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Runs every test in test/ — the files named *.test.js — each in its own process, and fails
- * if any of them fails. They use temp SQLite databases, generated RSA keys and stub subscribers
+ * if any of them fails. They use temp databases (PGlite in memory), generated RSA keys and stub subscribers
  * on random ports; none of them needs the network or a running OpenVibe.Network. The RTMP end-to-end test uses
  * the system ffmpeg and prints `rtmp-e2e: skipped (no ffmpeg on PATH)` when it is missing.
  *

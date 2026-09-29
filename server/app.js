@@ -76,7 +76,7 @@ function createApp({ rt, auth, keys, log = console, fetchImpl }) {
         service: 'openre',
         release: release.release,
         checks: [
-            { name: 'db', required: true, description: 'SQLite answers a query', check: async () => (await db.prepare('SELECT 1 AS ok').get()).ok === 1 },
+            { name: 'db', required: true, description: 'PostgreSQL answers a query', check: async () => (await db.prepare('SELECT 1 AS ok').get()).ok === 1 },
             { name: 'network_key', required: true, description: 'OpenVibe.Network RS256 key (sign-in and service tokens)', check: () => keys.loaded() || 'Network public key not loaded yet' },
             {
                 name: 'workers', required: false, description: 'a ready rtmp-ingest and restream worker',

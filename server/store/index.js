@@ -15,8 +15,8 @@ const { createRecordings } = require('./recordings');
 
 /**
  * The handle every store gets: its transactions are SERIALIZABLE. Several OpenRe processes change the same rows (a
- * publish admitted by ingest while the coordinator fails a lost worker's session), and SQLite's one writer used to
- * order them; PostgreSQL detects the conflict and the SDK runs the loser again (40001 is retried).
+ * publish admitted by ingest while the coordinator fails a lost worker's session); PostgreSQL detects the conflict
+ * and the SDK runs the loser again (40001 is retried).
  */
 function serializable(db) {
     if (db.serializable) return db;

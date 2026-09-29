@@ -5,8 +5,8 @@
  *
  * load(env) is pure so tests (and every worker process) can build a config without touching
  * process.env. All processes of the service (openre-api, openre-session-coordinator and the
- * transport workers) read the same file and share one SQLite database (ADR-007: one service,
- * one store; the processes are the reason this service is the first candidate for PostgreSQL).
+ * transport workers) read the same file and share one PostgreSQL database (ADR-035: one
+ * service, one store).
  */
 
 const int = (v, d) => {
@@ -58,11 +58,9 @@ function load(env = process.env) {
 
         // ── Store ───────────────────────────────────────────────
         // PostgreSQL (ADR-035): DATABASE_URL serves through PgBouncer, DATABASE_DIRECT_URL (the owner) runs migrations/.
-        // Without DATABASE_URL, development and tests use an embedded PGlite database (OPENRE_PGLITE_DIR). dbPath: the
-        // SQLite file the one-time move reads (scripts/migrate-to-postgres.js).
+        // Without DATABASE_URL, development and tests use an embedded PGlite database (OPENRE_PGLITE_DIR).
         db: { url: env.DATABASE_URL || '', directUrl: env.DATABASE_DIRECT_URL || '', pgliteDir: env.OPENRE_PGLITE_DIR || '' },
         valkey: { url: env.VALKEY_URL || '', prefix: env.VALKEY_PREFIX || 'ov:openre:' },
-        dbPath: env.OPENRE_DB_PATH || './data/openre.db',
 
         // ── Secrets ─────────────────────────────────────────────
         // 32-byte key (hex or base64) that encrypts destination stream keys and SRT passphrases
