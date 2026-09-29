@@ -65,23 +65,26 @@ function createWorkerRuntime({ rt, kind, log = console, hooks = {}, exit = (code
         if (row.state === 'draining' && !draining) {
             draining = true;
             log.log(`[${kind}] generation ${row.generation} draining (deadline ${new Date(row.drain_deadline).toISOString()})`);
-            try { hooks.onDrain && hooks.onDrain(row); } catch (err) { log.error(`[${kind}] onDrain: ${err.message}`); }
+            call('onDrain', row);
         }
         if (draining && row.drain_deadline && row.drain_deadline <= Date.now() && !deadlineHandled) {
             deadlineHandled = true;
             log.warn(`[${kind}] drain deadline reached; ending remaining transports`);
-            try { hooks.onDrainDeadline && hooks.onDrainDeadline(row); } catch (err) { log.error(`[${kind}] onDrainDeadline: ${err.message}`); }
+            call('onDrainDeadline', row);
         }
         if (hooks.onEndRequested) {
-            for (const s of await store.sessions.endRequestsFor(me.id)) {
-                try { hooks.onEndRequested(s); } catch (err) { log.error(`[${kind}] onEndRequested: ${err.message}`); }
-            }
+            for (const s of await store.sessions.endRequestsFor(me.id)) call('onEndRequested', s);
         }
-        if (hooks.onHeartbeat) {
-            try { hooks.onHeartbeat(row); } catch (err) { log.error(`[${kind}] onHeartbeat: ${err.message}`); }
-        }
+        call('onHeartbeat', row);
         if (draining) exitWhenIdle();
         return row;
+    }
+
+    /** A hook, run beside the heartbeat (they stop publishers and wait for them to leave, so the beat must not wait on
+     *  them); async ones used to reject unhandled — a failure is now logged, sync or async. */
+    function call(name, ...args) {
+        if (typeof hooks[name] !== 'function') return;
+        Promise.resolve().then(() => hooks[name](...args)).catch((err) => log.error(`[${kind}] ${name}: ${err.message}`));
     }
 
     function schedule() {
@@ -108,9 +111,12 @@ function createWorkerRuntime({ rt, kind, log = console, hooks = {}, exit = (code
         if (active > 0 || stopped) return false;
         stopped = true;
         clearTimeout(timer);
-        store.workers.stop(me.id, draining ? 'drained' : 'exit');
         log.log(`[${kind}] generation ${me.generation} idle after drain; exiting`);
-        settle(hooks.onExit).finally(() => exit(0));
+        // The stopped row is written before the process goes: otherwise the worker stays ready/draining until its lease
+        // expires and new sessions can be routed to a generation that is gone.
+        Promise.resolve().then(() => store.workers.stop(me.id, draining ? 'drained' : 'exit'))
+            .catch((err) => log.error(`[${kind}] could not record the stop: ${err.message}`))
+            .finally(() => settle(hooks.onExit).finally(() => exit(0)));
         return true;
     }
 

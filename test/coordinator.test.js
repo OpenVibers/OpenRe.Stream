@@ -154,7 +154,8 @@ t('the worker runtime exits by itself when a draining generation is idle, and on
     assert.deepStrictEqual(exits, [], 'still carrying an output');
     active = 0;
     await wr.beat();
-    await new Promise(r => setImmediate(r));
+    // The exit comes after the stopped row is written (a real query), not on the next tick.
+    for (let i = 0; i < 100 && !exits.length; i++) await new Promise(r => setTimeout(r, 10));
     assert.deepStrictEqual(exits, [0]);
     assert.strictEqual((await rt.store.workers.get(wr.me.id)).state, 'stopped');
 
@@ -164,7 +165,7 @@ t('the worker runtime exits by itself when a draining generation is idle, and on
     await wr2.ready();
     await rt.store.workers.lose(wr2.me.id, 'test');
     await wr2.beat();
-    await new Promise(r => setImmediate(r));
+    for (let i = 0; i < 100 && !exits2.length; i++) await new Promise(r => setTimeout(r, 10));
     assert.deepStrictEqual(exits2, [1]);
 });
 
