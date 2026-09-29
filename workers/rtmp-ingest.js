@@ -53,6 +53,16 @@ function listenInRange(server, min, max, skip = new Set()) {
     });
 }
 
+/**
+ * Run `admission` then `onAdmitted`, with `onFailed` for a rejection of `admission` itself. `.then(onOk, onErr)`
+ * leaves a rejection of the (async) success handler — `sessions.finish` before the publisher went live — unhandled,
+ * and Node 22 ends the worker on an unhandled rejection, dropping every publisher on it. The trailing `.catch`
+ * routes both rejection sources to the log.
+ */
+function admissionChain(admission, onAdmitted, onFailed, log) {
+    return admission.then(onAdmitted, onFailed).catch((err) => log.error(`[rtmp] admission failed: ${err.stack || err}`));
+}
+
 function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(code) }) {
     const { store, config } = rt;
     NmsLogger.setLogType(1); // errors only: the library's info lines would print stream paths
@@ -127,7 +137,7 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
             // NetStream.Publish.BadConnection without touching the first stream.
             if (publishers.has(session.id)) return onPublish(invokeMessage);
             const streamPath = `/${session.appname}/${String(invokeMessage.streamName || '').split('?')[0]}`;
-            admit(session, streamPath).then(async (adm) => {
+            admissionChain(admit(session, streamPath), async (adm) => {
                 if (!session.isStarting) {
                     // The publisher left while it was being admitted: its session ends without going live.
                     if (adm.sessionId) await store.sessions.finish(adm.sessionId, { reason: 'publisher_disconnected', actor: `worker:${runtime.me.id}` });
@@ -139,7 +149,7 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
                 log.error(`[rtmp] admission failed: ${err.stack || err}`);
                 admissions.set(session.id, { error: 'admission failed' });
                 if (session.isStarting) onPublish(invokeMessage);
-            });
+            }, log);
         };
     }
 
@@ -313,8 +323,8 @@ if (require.main === module) {
             console.error(`[rtmp] uncaught exception (worker keeps running): ${err && err.stack || err}`);
             if (!started) process.exit(1);
         });
-        for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => worker.drain(sig));
+        for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => worker.drain(sig).catch((err) => console.error(`[rtmp] drain failed on ${sig}: ${err && (err.stack || err.message) || err}`)));
     })().catch((err) => { console.error(`[rtmp-ingest] failed to start: ${err && err.stack || err}`); process.exit(1); });
 }
 
-module.exports = { createRtmpIngest, listenInRange };
+module.exports = { createRtmpIngest, listenInRange, admissionChain };

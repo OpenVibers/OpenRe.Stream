@@ -117,13 +117,13 @@ if (require.main === module) {
         exitIfDrill(config, 'openre-restream-worker');
         const rt = await openRuntime({ config });
         const worker = createRestreamWorker({ rt });
-        worker.start();
+        await worker.start();
         // If this process dies, its ffmpeg children must not keep pushing unsupervised: the outputs are
         // reassigned to another worker, and two pushes to one ingest make platforms drop both.
         process.on('exit', () => {
             for (const r of worker.runners().values()) { try { if (r.proc) r.proc.kill('SIGKILL'); } catch { /* */ } }
         });
-        for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => worker.drain(sig));
+        for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => worker.drain(sig).catch((err) => console.error(`[restream-worker] drain failed on ${sig}: ${err && (err.stack || err.message) || err}`)));
     })().catch((err) => { console.error(`[restream-worker] failed to start: ${err && err.stack || err}`); process.exit(1); });
 }
 

@@ -84,14 +84,14 @@ function createWorkerRuntime({ rt, kind, log = console, hooks = {}, exit = (code
      *  them); async ones used to reject unhandled — a failure is now logged, sync or async. */
     function call(name, ...args) {
         if (typeof hooks[name] !== 'function') return;
-        Promise.resolve().then(() => hooks[name](...args)).catch((err) => log.error(`[${kind}] ${name}: ${err.message}`));
+        Promise.resolve().then(() => hooks[name](...args)).catch((err) => log.error(`[${kind}] ${name}: ${err && (err.stack || err.message) || err}`));
     }
 
     function schedule() {
         clearTimeout(timer);
         if (stopped) return;
         timer = setTimeout(async () => {
-            try { await beat(); } catch (err) { log.error(`[${kind}] heartbeat failed: ${err.message}`); }
+            try { await beat(); } catch (err) { log.error(`[${kind}] heartbeat failed: ${err && (err.stack || err.message) || err}`); }
             schedule();
         }, config.workers.heartbeatMs);
     }
@@ -115,7 +115,7 @@ function createWorkerRuntime({ rt, kind, log = console, hooks = {}, exit = (code
         // The stopped row is written before the process goes: otherwise the worker stays ready/draining until its lease
         // expires and new sessions can be routed to a generation that is gone.
         Promise.resolve().then(() => store.workers.stop(me.id, draining ? 'drained' : 'exit'))
-            .catch((err) => log.error(`[${kind}] could not record the stop: ${err.message}`))
+            .catch((err) => log.error(`[${kind}] could not record the stop: ${err && (err.stack || err.message) || err}`))
             .finally(() => settle(hooks.onExit).finally(() => exit(0)));
         return true;
     }
@@ -128,7 +128,14 @@ function createWorkerRuntime({ rt, kind, log = console, hooks = {}, exit = (code
         exitWhenIdle,
         get me() { return me; },
         get draining() { return draining; },
-        stop() { stopped = true; clearTimeout(timer); if (me) store.workers.stop(me.id, 'stopped'); },
+        stop() {
+            stopped = true;
+            clearTimeout(timer);
+            // A close() caller does not wait for this write, but a rejection must still be handled: an
+            // unhandled one ends the process, and the stopped row would be lost without a trace.
+            if (me) return store.workers.stop(me.id, 'stopped').catch((err) => log.error(`[${kind}] could not record the stop: ${err && (err.stack || err.message) || err}`));
+            return undefined;
+        },
     };
 }
 

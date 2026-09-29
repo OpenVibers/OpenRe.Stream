@@ -41,8 +41,8 @@ async function main(kind) {
     const config = load();
     exitIfDrill(config, `openre-${kind}`);
     const w = createUnportedTransport({ rt: await openRuntime({ config }), kind });
-    w.start();
-    for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => w.drain(sig));
+    await w.start();
+    for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => w.drain(sig).catch((err) => console.error(`[${kind}] drain failed on ${sig}: ${err && (err.stack || err.message) || err}`)));
 }
 
 module.exports = { createUnportedTransport, PORT_STATUS, main };

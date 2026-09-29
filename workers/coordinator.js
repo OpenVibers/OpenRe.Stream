@@ -8,6 +8,15 @@
  */
 const path = require('path');
 
+/**
+ * Best-effort housekeeping on a 6-hour timer: `prune` is async and the timer is fire-and-forget, so its rejection
+ * must be handled — an unhandled one ends the coordinator (Node 22), delaying output assignment and the events
+ * relay. Wrapping the call also turns a synchronous throw (an absent outbox) into the same logged path.
+ */
+function pruneOutbox(outbox, log = console) {
+    return Promise.resolve().then(() => outbox.prune()).catch((err) => log.error(`[coordinator] outbox prune failed (next time): ${err && err.message || err}`));
+}
+
 if (require.main === module) {
     (async () => {
         require('dotenv').config({ path: process.env.OPENRE_ENV_FILE || path.join(process.cwd(), '.env') });
@@ -23,7 +32,8 @@ if (require.main === module) {
         const coordinator = createCoordinator({ rt, media, lineage });
         coordinator.start();
         console.log(`[coordinator] running (events relay ${rt.events.configured ? 'on' : 'off: EVENTS_URL/OV_OAUTH_CLIENT_SECRET not set'}, recordings ${media.configured ? `on → ${config.media.url} app ${config.media.appId}` : 'off'}, Live lineage ${lineage.enabled ? 'on' : 'off'})`);
-        const prune = setInterval(() => { try { rt.events.outbox.prune(); } catch { /* next time */ } }, 6 * 60 * 60 * 1000);
+        // prune is async: a bare call would reject unhandled (Node ends the coordinator) instead of being caught.
+        const prune = setInterval(() => pruneOutbox(rt.events.outbox, console), 6 * 60 * 60 * 1000);
         prune.unref();
         const shutdown = (sig) => {
             console.log(`[coordinator] ${sig}: stopping`);
@@ -34,3 +44,5 @@ if (require.main === module) {
         process.on('SIGINT', () => shutdown('SIGINT'));
     })().catch((err) => { console.error(`[coordinator] failed to start: ${err && err.stack || err}`); process.exit(1); });
 }
+
+module.exports = { pruneOutbox };
