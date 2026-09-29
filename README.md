@@ -43,11 +43,11 @@ The ingest/restream control plane and runtime extracted from OpenVibe.Live. Live
 |---|---|---|---|
 | RTMP ingest | `server/streaming/rtmp-server.js` (node-media-server) | `workers/rtmp-ingest.js` — same NMS session code; OpenRe's own keys; publish renamed to `/live/<session id>` so no key reaches a play URL; loopback RTMP play + HTTP-FLV per generation; SO_REUSEPORT drain | **ported, tested with real ffmpeg** |
 | Restream (RTMP source) | `server/streaming/restream-manager.js` | `workers/restream/*` — same ffmpeg arguments (codec copy from HTTP-FLV), Twitch→RTMPS, Kick `/app`, SRT options, live ACK by `-progress`, backoff, rapid-crash circuit breaker, destination cooldown | **ported, tested with real ffmpeg** |
-| Restream from JSMPEG / WebRTC sources | same | encoder args ported (`encodingArgs`), sources not (they need those ingests) | not ported |
+| Restream from a JSMPEG source | same | `jsmpegArgs()` — re-encodes the worker's MPEG-TS data tap (`http://127.0.0.1:<tapPort>/tap/<session>.ts`) | **ported, tested with real ffmpeg** |
+| Restream from a WebRTC source | same | encoder args ported (`encodingArgs`), source not (it needs that ingest) | not ported |
 | Recording | `server/streaming/recorder.js` + `server/media-client.js` | `server/store/recordings.js` + `server/media-client.js` — same Media API v1 calls (create VOD, `ingest/rtmp`, finalize, delete shell / clips-only) driven by the coordinator; Media pulls the loopback play URL | **ported (RTMP)**, tested against a stub Media that really pulls the URL |
-| WHIP / WebRTC ingest | `whip-handler.js` (werift) | `workers/webrtc-ingest.js`: worker interface + coordinator registration only | **not ported** |
-| SFU | `webrtc-sfu.js` + `broadcast-server.js` (mediasoup) | `workers/sfu.js`: worker interface only | **not ported** |
-| JSMPEG | `jsmpeg-relay.js` | `workers/jsmpeg.js`: worker interface only | **not ported** |
+| WebRTC (WHIP ingest + SFU + viewer signaling) | `whip-handler.js` + `webrtc-sfu.js` + `broadcast-server.js` (werift + mediasoup; one worker owns all of it) | `workers/webrtc.js`: worker interface + coordinator registration only | **not ported** |
+| JSMPEG | `jsmpeg-relay.js` | `workers/jsmpeg.js` — MPEG-TS POST admission by key in path, WebSocket viewers by playback id, loopback MPEG-TS data tap for restream; SO_REUSEPORT drain | **ported, tested with real ffmpeg** |
 | OAuth-linked destinations (per go-live Twitch/YouTube key refresh, YouTube broadcast creation) | `restream-manager._refreshDestFromConnection` | no (Live owns platform OAuth); OpenRe pushes to the stored key | **not ported** |
 | Viewer counts from platforms, chat relay, PowerChat | restream-manager / integrations | no (product features, stay in Live) | not in scope |
 
@@ -134,11 +134,12 @@ Written to `event_outbox` in the same transaction as the change (openvibe-sdk `c
 | `openre.session.failed` | `ingest_session` | worker lost, lease expired, … (`was_live`, reason) |
 | `openre.output.healthy` / `openre.output.failed` | `output` | an output confirmed live / gave up (error, cooldown) |
 | `openre.recording.requested` | `recording` | Media accepted the recording request (Media app + VOD id) |
+| `openre.recording.failed` | `recording` | a recording could not start (e.g. `recording is not available for jsmpeg`) |
 | `openre.key.rotated` | `stream` | new key id + hint, retired key ids, grace end |
 
 ## Playback
 
-`GET /api/v1/sessions/:id/playback` returns a descriptor: `flv.internal_url` (loopback HTTP-FLV on the worker that holds the session — for services on this host), `flv.public_url` (`https://openre.stream/play/<session>.flv`, proxied by the API for non-private streams), `rtmp.internal_url` (loopback RTMP play, what Media records from). `webrtc` and `hls` are `null` (not produced). Live's player keeps using its own `/api/streams/rtmp-proxy/:id.flv`, which for an OpenRe session proxies `flv.internal_url` (see the Live patch).
+`GET /api/v1/sessions/:id/playback` returns a descriptor: `flv.internal_url` (loopback HTTP-FLV on the worker that holds the session — for services on this host), `flv.public_url` (`https://openre.stream/play/<session>.flv`, proxied by the API for non-private streams), `rtmp.internal_url` (loopback RTMP play, what Media records from). A **jsmpeg** session's descriptor is `jsmpeg: { ws_url, width, height }` (`ws_url` is the worker's public WebSocket path carrying the session's playback id, never the key; `width`/`height` come from the ffmpeg POST path), plus `jsmpeg.tap_internal_url`, the loopback MPEG-TS tap the restream worker reads. `webrtc` and `hls` are `null` (not produced). The session API also reports `viewers` (connected JSMPEG viewers, from the worker heartbeat). Live's player keeps using its own `/api/streams/rtmp-proxy/:id.flv`, which for an OpenRe session proxies `flv.internal_url` (see the Live patch).
 
 ## Recording
 
@@ -162,6 +163,8 @@ Reporting a vulnerability: [SECURITY.md](SECURITY.md).
 | 9935/tcp (loopback) | Live's HTTP-FLV | same |
 | **1936/tcp** | OpenRe `openre-rtmp-ingest` (all generations, SO_REUSEPORT) | permanent: URLs handed out as `rtmp://ingest.openre.stream:1936/live` keep working |
 | 19360–19399/tcp (loopback) | OpenRe per-generation RTMP play + HTTP-FLV | permanent |
+| **9736/tcp** | OpenRe `openre-jsmpeg` (all generations, SO_REUSEPORT): MPEG-TS POST + WS viewers | permanent: `http://ingest.openre.stream:9736/<key>/<w>/<h>/` and `ws://…/<session>` |
+| 19710–19749/tcp (loopback) | OpenRe per-generation JSMPEG MPEG-TS data tap | permanent |
 | 4500/tcp (loopback) | `openre-api` | permanent |
 
 The switch to 1935: once Live no longer listens on 1935, set `OPENRE_RTMP_EXTRA_PORTS=1935` and deploy a worker generation (`deploy.sh workers`); from then on `rtmp://ingest.openre.stream/live` works too, and 1936 keeps working. `ingest.openre.stream` is a DNS-only record (RTMP cannot go through Cloudflare's proxy); open 1936/tcp at the host firewall and the provider edge.
@@ -183,7 +186,7 @@ sudo deploy/scripts/deploy.sh status                # deploy-legacy.sh
 - ovhost refuses an API restart while an ingest session is open (`--wait-idle` holds it, `--force` goes ahead), records every attempt (`ovhost releases openre`), prunes releases beyond five but never one a worker generation runs from, and announces the release. When ovhost is missing, too old or does not deploy OpenRe with `release-layout`, the wrapper runs [deploy/scripts/deploy-legacy.sh](deploy/scripts/deploy-legacy.sh), the previous script, unchanged (`OVHOST_LEGACY=1` forces it). `workers`, `status` and `prune` always run it.
 
 - An **API deploy** never restarts a worker unit (no unit depends on another). Viewers of `openre.stream/play/…` reconnect; encoders, restreams and recordings do not notice.
-- A **worker deploy** starts `openre-rtmp-ingest@<sha>` and `openre-restream-worker@<sha>`; older instances are disabled (not stopped) and exit on their own when drained. Never `systemctl restart` a worker instance during a broadcast; `systemctl stop` starts a drain and waits up to 30 min (`TimeoutStopSec`), then kills.
+- A **worker deploy** starts `openre-rtmp-ingest@<sha>`, `openre-restream-worker@<sha>` and `openre-jsmpeg@<sha>`; older instances are disabled (not stopped) and exit on their own when drained. Never `systemctl restart` a worker instance during a broadcast; `systemctl stop` starts a drain and waits up to 30 min (`TimeoutStopSec`), then kills.
 - Worker instances are named after the release. `deploy.sh workers <sha>` for a release that already runs a generation does nothing. An env change that workers read, such as `OPENRE_RTMP_BIND`, takes effect with the next release's generation (docs/cutover.md A3).
 - **Restore drills** (`ovhost drill openre`, OpenVibe.Host) start only `openre-api`, with `OPENRE_DRILL=1`, on a restored copy of the database. In drill mode the API serves reads and refuses writes, `/play/` and sign-in with 503 `openre.drill_read_only`. The coordinator and every worker exit before they open the database. The event relay and Media calls are off (`test/drill-mode.test.js`). Never set `OPENRE_DRILL` in `/etc/openvibe/openre.env`; the preflight's `env` check fails if it is set.
 - Rollback: when `openre-api` is not ready within 60 s ovhost switches `current` back to the previous
@@ -237,9 +240,13 @@ the env, the bind, DNS, the port from outside, the database, Live's env, the Eve
 one slot. Status on 2026-09-23: OpenRe is deployed (`655b98a10aaa`) and DNS is done. The release with
 `6dc78a5`, the public bind, the provider port, Live's settings and the subscription are not.
 
-### WHIP, JSMPEG, SFU (not ready)
+### JSMPEG (worker ready)
 
-Each needs its transport ported into its worker (`workers/webrtc-ingest.js`, `workers/jsmpeg.js`, `workers/sfu.js` have the interface and registration), a restream source for it, a playback descriptor (`webrtc`), recording (RTP to Media for WebRTC; JSMPEG has no Media ingest), and `OPENRE_PROTOCOLS` in Live's `server/openre/authority.js` extended. The same per-slot switch, window and rollback apply.
+`workers/jsmpeg.js` is ported (key-in-path admission, WebSocket viewers by playback id, the MPEG-TS data tap, generations/drain), and `jsmpegArgs()` restreams it. docs/cutover.md has the JSMPEG slot procedure (J-A once, then J-B1–B6 per slot): set `OPENRE_JSMPEG_BIND=0.0.0.0`, open 9736 at the provider edge, add `jsmpeg` to Live's `OPENRE_PROTOCOLS`, then the per-slot window/switch/rollback. JSMPEG has **no recording** (parity with Live): a jsmpeg definition with recording on fails the request explicitly.
+
+### WebRTC (not ready)
+
+One `workers/webrtc.js` will own WHIP ingest, the mediasoup producers/consumers and viewer signaling (decision 1: mediasoup is single-process, so ingest and consumption cannot be split). It needs its ported transport, a restream source for it, a `webrtc` playback descriptor, recording (RTP to Media) and `webrtc` in Live's `OPENRE_PROTOCOLS`. The same per-slot switch, window and rollback apply.
 
 ## Acceptance
 

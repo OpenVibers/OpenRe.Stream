@@ -1,22 +1,20 @@
 'use strict';
 /**
- * The worker interface for the transports OpenRe does not carry yet: WHIP/WebRTC ingest
- * (werift), the mediasoup SFU and JSMPEG. Each registers a generation with the coordinator, takes
- * part in the drain protocol and heartbeats like a real transport worker, and carries nothing:
- * activeCount() is always 0, and no session of these protocols is ever admitted (their stream
- * definitions may list the protocol, but no worker accepts it, so encoders keep using Live).
+ * The worker interface for the transports OpenRe does not carry yet. Today only WebRTC: the port
+ * (WHIP ingest + mediasoup SFU + viewer signaling) is T4's next job (decision 1, one worker owns
+ * all of it). It registers a generation with the coordinator, takes part in the drain protocol and
+ * heartbeats like a real transport worker, and carries nothing: activeCount() is always 0, and no
+ * 'webrtc' session is ever admitted (a definition may list the protocol, but its HTTP error is
+ * 'protocol_not_allowed' — no worker accepts it, so encoders keep using Live).
  *
- * This is the seam the port lands in: a ported transport replaces `admit nothing` with its
- * session code and reports its sessions through store.sessions exactly like rtmp-ingest.js.
- * Nothing in production runs these (deploy/ has no unit for them).
+ * This is the seam the port lands in: it replaces `admit nothing` with its session code and reports
+ * sessions through store.sessions exactly like rtmp-ingest.js / jsmpeg.js.
  */
 const path = require('path');
 const { createWorkerRuntime } = require('./runtime');
 
 const PORT_STATUS = Object.freeze({
-    'webrtc-ingest': 'WHIP/WebRTC ingest (Live: server/streaming/whip-handler.js, werift) — not ported',
-    sfu: 'WebRTC SFU (Live: server/streaming/webrtc-sfu.js + broadcast-server.js, mediasoup) — not ported',
-    jsmpeg: 'JSMPEG relay (Live: server/streaming/jsmpeg-relay.js) — not ported',
+    webrtc: 'WebRTC (WHIP ingest + mediasoup SFU + viewer signaling; Live: server/streaming/whip-handler.js + webrtc-sfu.js + broadcast-server.js) — not ported',
 });
 
 function createUnportedTransport({ rt, kind, log = console, exit = (code) => process.exit(code) }) {

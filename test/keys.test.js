@@ -29,7 +29,8 @@ t('unknown, malformed and wrong-protocol keys are refused', async () => {
     const { key } = await rt.store.definitions.create({ owner_subject: OWNER });
     assert.strictEqual((await rt.store.definitions.resolveIngestKey('ork_' + 'A'.repeat(43), 'rtmp')).error, 'unknown_key');
     assert.strictEqual((await rt.store.definitions.resolveIngestKey('a3f9c2', 'rtmp')).error, 'malformed_key');
-    assert.strictEqual((await rt.store.definitions.resolveIngestKey(key.key, 'whip')).error, 'protocol_not_allowed');
+    assert.strictEqual((await rt.store.definitions.resolveIngestKey(key.key, 'webrtc')).error, 'protocol_not_allowed');
+    assert.strictEqual((await rt.store.definitions.resolveIngestKey(key.key, 'jsmpeg')).error, 'protocol_not_allowed');
 });
 
 t('rotate revokes the old key immediately and emits openre.key.rotated without any key', async () => {

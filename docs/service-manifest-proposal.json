@@ -30,11 +30,12 @@
     "openre.output.healthy",
     "openre.output.failed",
     "openre.recording.requested",
+    "openre.recording.failed",
     "openre.key.rotated"
   ],
   "eventsConsumed": [],
   "namespacesOwned": [
     "openre.*"
   ],
-  "notes": "Ingest and restream authority (ADR-009). Alpha: RTMP ingest and RTMP/SRT restream run in transport workers with generations and leases, separate from the API; WHIP, WebRTC/SFU and JSMPEG are still ingested by Live. Runs in parallel with Live; slots move one at a time behind Live's per-slot ingest_authority switch."
+  "notes": "Ingest and restream authority (ADR-009). Alpha: RTMP ingest, JSMPEG ingest+relay, and RTMP/SRT/JSMPEG-source restream run in transport workers with generations and leases, separate from the API; WebRTC (WHIP + SFU) is still ingested by Live. Runs in parallel with Live; slots move one at a time behind Live's per-slot ingest_authority switch."
 }

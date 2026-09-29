@@ -22,6 +22,18 @@ async function columns(db, table) {
     try { return new Set((await db.prepare(`PRAGMA table_info(${table})`).all()).map(c => c.name)); } catch { return new Set(); }
 }
 
+/**
+ * The definition protocols for a Live slot (T4 decision 2): 'whip' is an input alias for 'webrtc',
+ * 'webrtc' and 'jsmpeg' slots import as themselves (they are unadmittable until their worker ships
+ * — the per-slot switch is the real gate), anything else is treated as RTMP.
+ */
+function protocolOf(ms) {
+    const p = String(ms.protocol || '').toLowerCase();
+    if (p === 'whip' || p === 'webrtc') return ['webrtc'];
+    if (p === 'jsmpeg') return ['jsmpeg'];
+    return ['rtmp'];
+}
+
 function recordingModeOf(ms, channel) {
     let vod = !channel ? true : Boolean(channel.vod_recording_enabled) && !channel.force_vod_recording_disabled;
     if (vod && ms.slot_vod_recording_enabled === 0) vod = false;
@@ -100,7 +112,7 @@ async function migrate({ liveDb, rt, apply = false, onlySlots = null, now = () =
                     owner_subject: subject,
                     title: ms.title || `${ms.display_name || ms.username}'s stream`,
                     description: ms.description || '',
-                    protocols: ['rtmp'],
+                    protocols: protocolOf(ms),
                     recording_mode: recordingModeOf(ms, chRow),
                     recording_visibility: visibilityOf(ms, chRow),
                     mirror_to_live: true,
@@ -206,8 +218,10 @@ function checklist(report, { openreUrl = 'https://openre.stream', rtmpUrl } = {}
             lines.push(`### Slot ${s.live_id}${s.slug ? ` "${s.slug}"` : ''}: ${s.title || ''} — ${s.status}${s.definition_id ? ` → ${s.definition_id}` : ''}`);
             if (s.reason && s.status !== 'imported') lines.push(`- ${s.status}: ${s.reason}`);
             if (s.status === 'imported') {
-                if (s.protocol !== 'rtmp' && !['rtmp', 'obs'].includes(String(s.streaming_method || '').toLowerCase())) {
-                    lines.push(`- Slot protocol is ${s.protocol}${s.streaming_method ? ` / ${s.streaming_method}` : ''}: only RTMP moves to OpenRe; leave this slot on Live unless the broadcaster streams it with OBS/RTMP.`);
+                if (s.protocol === 'webrtc' || s.protocol === 'whip') {
+                    lines.push(`- Slot protocol is ${s.protocol}${s.streaming_method ? ` / ${s.streaming_method}` : ''}: the webrtc worker is not ported yet; leave this slot on Live until it ships.`);
+                } else if (s.protocol === 'jsmpeg') {
+                    lines.push(`- Slot protocol is jsmpeg${s.streaming_method ? ` / ${s.streaming_method}` : ''}: switch it after the JSMPEG worker generation is running (docs/cutover.md, JSMPEG).`);
                 }
                 lines.push(`- [ ] Maintenance window agreed with @${ch.username} (the slot must be offline when it is switched).`);
                 lines.push(`- [ ] Destinations reviewed on ${openreUrl}/streams/${s.definition_id || '<id>'}: ${s.destinations.length ? s.destinations.map(d => `${d.name} (${d.platform}) ${d.status}${d.reason ? `: ${d.reason}` : ''}`).join('; ') : 'none'}`);

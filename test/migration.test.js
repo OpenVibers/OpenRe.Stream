@@ -85,6 +85,7 @@ t('apply: slots with a subject are imported with new keys; the rest are held or 
     assert.strictEqual((await rt.store.definitions.get(map['managed_stream:13'].target_id)).recording_mode, 'none', 'VOD off on the channel, clips off on the slot');
     assert.strictEqual((await rt.store.definitions.get(map['managed_stream:14'].target_id)).recording_mode, 'clips');
     assert.strictEqual((await rt.store.definitions.get(map['managed_stream:14'].target_id)).recording_visibility, 'private');
+    assert.deepStrictEqual((await rt.store.definitions.get(map['managed_stream:13'].target_id)).protocols, ['webrtc'], 'a webrtc slot imports as a webrtc definition (unadmittable until the worker ships)');
 
     // Old keys: none of them authenticates, and none is stored in any form.
     for (const old of ['a3f9c2leakedkey0000000000000000000000000', 'personalkey111']) {
@@ -114,7 +115,7 @@ t('apply: slots with a subject are imported with new keys; the rest are held or 
     assert.match(md, /## @japaneseoldguy/);
     assert.match(md, /ingest-authority/);
     assert.match(md, /OAuth-linked/);
-    assert.match(md, /only RTMP moves to OpenRe/, 'the WebRTC slot is flagged');
+    assert.match(md, /webrtc worker is not ported/, 'the WebRTC slot is flagged');
     for (const secret of ['a3f9c2leakedkey', 'live_twitchsecret_1', 'yt-secret-2222', 'personalkey111', 'kick-secret-44']) assert.ok(!md.includes(secret), `no ${secret} in the checklist`);
 });
 

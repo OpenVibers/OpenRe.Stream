@@ -8,16 +8,17 @@
  */
 const { spawn } = require('child_process');
 const fs = require('fs');
-const { rtmpCopyArgs, withProgress, buildDestUrl, friendlyError, redactUrl, redactText } = require('./ffmpeg-args');
+const { rtmpCopyArgs, jsmpegArgs, withProgress, buildDestUrl, resolvePreset, customOverrides, friendlyError, redactUrl, redactText } = require('./ffmpeg-args');
 const { validateDestinationUrl, checkResolvedHost } = require('../../server/destination-url');
 
 class OutputRunner {
-    constructor({ outputId, destinationId, inputUrl, store, config, log = console, spawnImpl = spawn, lookup, workerId = null }) {
+    constructor({ outputId, destinationId, inputUrl, source = 'rtmp', store, config, log = console, spawnImpl = spawn, lookup, workerId = null }) {
         this.outputId = outputId;
         this.workerId = workerId;
         this.secrets = [];
         this.destinationId = destinationId;
         this.inputUrl = inputUrl;
+        this.source = source;
         this.store = store;
         this.config = config;
         this.log = log;
@@ -68,11 +69,15 @@ class OutputRunner {
         if (!resolved.ok) return this.fail(`destination refused: ${resolved.error}`, { cooldown: false });
         const destUrl = buildDestUrl(dest);
         if (!destUrl) return this.fail('destination has no usable URL or stream key', { cooldown: false });
+        this.preset = resolvePreset(dest);
+        this.overrides = customOverrides(dest);
         this.spawn(destUrl);
     }
 
     spawn(destUrl) {
-        const args = withProgress(rtmpCopyArgs(this.inputUrl, destUrl));
+        const args = withProgress(this.source === 'jsmpeg'
+            ? jsmpegArgs(this.inputUrl, destUrl, this.preset || resolvePreset({}), this.overrides ? { overrides: this.overrides } : {})
+            : rtmpCopyArgs(this.inputUrl, destUrl));
         const rtmps = destUrl.startsWith('rtmps://');
         const bin = rtmps && this.o.ffmpegOpenSslPath && fs.existsSync(this.o.ffmpegOpenSslPath) ? this.o.ffmpegOpenSslPath : this.o.ffmpegPath;
         this.note('info', `starting ffmpeg → ${redactUrl(destUrl)}${bin !== this.o.ffmpegPath ? ' (openssl build)' : ''}`);

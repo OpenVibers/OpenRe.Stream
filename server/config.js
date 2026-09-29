@@ -22,6 +22,7 @@ function load(env = process.env) {
     const isProduction = nodeEnv === 'production';
     const port = int(env.PORT, 4500);
     const rtmpPort = int(env.OPENRE_RTMP_PORT, 1936);
+    const jsmpegPort = int(env.OPENRE_JSMPEG_PORT, 9736);
     return {
         service: 'openre',
         port,
@@ -90,6 +91,22 @@ function load(env = process.env) {
             internalPortMax: int(env.OPENRE_RTMP_INTERNAL_PORT_MAX, 19399),
             chunkSize: int(env.OPENRE_RTMP_CHUNK_SIZE, 60000),
             maxPublishersPerWorker: int(env.OPENRE_RTMP_MAX_PUBLISHERS, 64),
+        },
+
+        // ── Ingest (JSMPEG) ─────────────────────────────────────
+        jsmpeg: {
+            // Public port for both the MPEG-TS HTTP POST from the broadcaster's ffmpeg and the
+            // WebSocket viewers. Live's relay owns 9710/9711 until the JSMPEG cutover; OpenRe
+            // listens on 9736 until then, SO_REUSEPORT so two generations can listen during a drain.
+            port: jsmpegPort,
+            bindHost: env.OPENRE_JSMPEG_BIND || '0.0.0.0',
+            publicHost: env.OPENRE_JSMPEG_PUBLIC_HOST || (isProduction ? 'ingest.openre.stream' : '127.0.0.1'),
+            publicPort: int(env.OPENRE_JSMPEG_PUBLIC_PORT, jsmpegPort),
+            // Loopback data tap a generation serves the raw MPEG-TS from (the restream worker reads
+            // it). First free port from this range; never Live's 9710/9711.
+            internalPortMin: int(env.OPENRE_JSMPEG_INTERNAL_PORT_MIN, 19710),
+            internalPortMax: int(env.OPENRE_JSMPEG_INTERNAL_PORT_MAX, 19749),
+            maxPublishersPerWorker: int(env.OPENRE_JSMPEG_MAX_PUBLISHERS, 64),
         },
 
         // ── Workers, leases, generations ────────────────────────

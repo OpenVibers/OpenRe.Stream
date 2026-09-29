@@ -28,6 +28,9 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
         transitionRow: db.prepare('INSERT INTO session_transitions (session_id, from_state, to_state, reason, actor, at) VALUES (?, ?, ?, ?, ?, ?)'),
         transitions: db.prepare('SELECT from_state, to_state, reason, actor, at FROM session_transitions WHERE session_id = ? ORDER BY id'),
         mediaInfo: db.prepare(`UPDATE ingest_sessions SET media_info = ? WHERE id = ? AND state IN ${OPEN}`),
+        // Viewer counts live inside media_info so no column is needed: merge, never replace, so the
+        // width/height the JSMPEG ingest path reported survive.
+        viewers: db.prepare(`UPDATE ingest_sessions SET media_info = jsonb_set(COALESCE(NULLIF(media_info, '')::jsonb, '{}'::jsonb), '{viewers}', to_jsonb(?::bigint), true)::text WHERE id = ? AND state IN ${OPEN}`),
         requestEnd: db.prepare(`UPDATE ingest_sessions SET desired_state = 'end', end_requested_by = ?, updated_at = ? WHERE id = ? AND state IN ${OPEN}`),
         endRequests: db.prepare(`SELECT * FROM ingest_sessions WHERE worker_id = ? AND desired_state = 'end' AND state IN ${OPEN}`),
         ofWorker: db.prepare(`SELECT * FROM ingest_sessions WHERE worker_id = ? AND state IN ${OPEN}`),
@@ -46,7 +49,8 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
 
     function shape(s) {
         if (!s) return null;
-        return { ...s, media_info: parseJson(s.media_info, null) };
+        const media_info = parseJson(s.media_info, null);
+        return { ...s, media_info, viewers: (media_info && Number(media_info.viewers)) || 0 };
     }
 
     async function get(id) {
@@ -200,8 +204,20 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
             flv: null,
             rtmp: null,
             webrtc: null,
+            jsmpeg: null,
             hls: null,
         };
+        if (session.protocol === 'jsmpeg' && ep.publicPort) {
+            const mi = session.media_info || {};
+            descriptor.jsmpeg = {
+                // Viewers connect over WebSocket to the worker that holds the session, by playback
+                // id (never the key). tap_internal_url is the loopback MPEG-TS feed restream reads.
+                ws_url: `ws://${config.jsmpeg.publicHost}:${ep.publicPort}/${session.id}`,
+                width: mi.width || null,
+                height: mi.height || null,
+                tap_internal_url: ep.tapPort ? `http://127.0.0.1:${ep.tapPort}/tap/${session.id}.ts` : null,
+            };
+        }
         if (session.protocol === 'rtmp' && ep.flvPort) {
             descriptor.flv = {
                 internal_url: `http://127.0.0.1:${ep.flvPort}/live/${session.id}.flv`,
@@ -225,6 +241,7 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
         requestEnd,
         playback,
         setMediaInfo: async (id, info) => (await q.mediaInfo.run(JSON.stringify(info), id)).changes > 0,
+        setViewers: async (id, count) => (await q.viewers.run(Math.max(0, Number(count) || 0), id)).changes > 0,
         transitions: async (id) => await q.transitions.all(id),
         endRequestsFor: async (workerId) => (await q.endRequests.all(workerId)).map(shape),
         ofWorker: async (workerId) => (await q.ofWorker.all(workerId)).map(shape),

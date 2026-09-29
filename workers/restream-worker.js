@@ -31,10 +31,17 @@ function createRestreamWorker({ rt, log = console, exit = (code) => process.exit
         },
     });
 
+    /** The loopback source URL for a session's protocol, or null when OpenRe cannot restream it yet. */
     async function inputUrlFor(session) {
-        if (session.protocol !== 'rtmp') return null;
-        const pb = await store.sessions.playback(session);
-        return pb && pb.flv ? pb.flv.internal_url : null;
+        if (session.protocol === 'rtmp') {
+            const pb = await store.sessions.playback(session);
+            return pb && pb.flv ? pb.flv.internal_url : null;
+        }
+        if (session.protocol === 'jsmpeg') {
+            const pb = await store.sessions.playback(session);
+            return pb && pb.jsmpeg ? pb.jsmpeg.tap_internal_url : null;
+        }
+        return null;
     }
 
     async function poll() {
@@ -59,7 +66,7 @@ function createRestreamWorker({ rt, log = console, exit = (code) => process.exit
             if (!input) { await store.outputs.report(row.id, { state: 'failed', last_error: `restream from ${session.protocol} sessions is not supported by OpenRe yet`, ended_at: Date.now() }, { workerId: runtime.me.id }); continue; }
             // Let the ingest settle before pulling (Live waits 3 s for node-media-server's FLV).
             if (session.live_at && Date.now() - session.live_at < config.outputs.startDelayMs) continue;
-            runner = new OutputRunner({ outputId: row.id, destinationId: row.destination_id, inputUrl: input, store, config, log, spawnImpl, lookup, workerId: runtime.me.id });
+            runner = new OutputRunner({ outputId: row.id, destinationId: row.destination_id, inputUrl: input, source: session.protocol, store, config, log, spawnImpl, lookup, workerId: runtime.me.id });
             runners.set(row.id, runner);
             runner.start().catch((err) => runner.fail(err.message, { cooldown: false }));
         }

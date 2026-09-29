@@ -18,7 +18,9 @@ const os = require('os');
 const { newId } = require('../ids');
 const { parseJson } = require('./definitions');
 
-const KINDS = Object.freeze(['rtmp-ingest', 'restream', 'webrtc-ingest', 'sfu', 'jsmpeg']);
+// T4 decision 2: one kind per transport. The 'webrtc-ingest' and 'sfu' kinds collapsed into the one
+// 'webrtc' worker (migration 0002 rewrites any stored rows).
+const KINDS = Object.freeze(['rtmp-ingest', 'restream', 'webrtc', 'jsmpeg']);
 const ALIVE = "('starting', 'ready', 'draining')";
 
 function createWorkers({ db, config, clock }) {

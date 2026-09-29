@@ -333,6 +333,46 @@ first, then B3 to B6.
 and restart Live. Every switched slot then behaves as a Live slot. Its Live key was rotated at the
 switch, so each broadcaster regenerates on the Go Live page.
 
+## JSMPEG protocol cutover (after RTMP)
+
+JSMPEG reuses the RTMP runbook above, with one **protocol precondition** (brief §4.5): the slot's
+`managed_streams.protocol` must be `jsmpeg` and its OpenRe definition carries the `jsmpeg` protocol.
+Live keeps its own `jsmpeg-relay.js` (9710/9711) until the last JSMPEG slot is cut over.
+
+### J-A. Once, before the first JSMPEG slot (AGENT)
+
+```bash
+# The release that carries workers/jsmpeg.js, deploy/scripts/deploy.sh, systemd/openre-jsmpeg@.service.
+sudo deploy/scripts/deploy.sh release origin/main
+sudo deploy/scripts/deploy.sh api <sha>
+# Public JSMPEG bind + a new generation. deploy.sh workers now starts openre-jsmpeg@<sha>.service too.
+# OPENRE_JSMPEG_BIND=0.0.0.0 and OPENRE_JSMPEG_PORT=9736 in /etc/openvibe/openre.env
+sudo deploy/scripts/deploy.sh workers <sha>
+```
+
+The **OWNER** opens `OPENRE_JSMPEG_PORT` (9736 until the cutover) at the provider edge; the host
+`ingest.openre.stream` is the DNS-only record RTMP already uses (raw MPEG-TS cannot go through
+Cloudflare's proxy). `openre.stream`/nginx gain the JSMPEG route only when Live's relay is retired.
+
+### J-B1–B6. Per JSMPEG slot
+
+Identical to B1–B6 with these substitutions:
+
+- **B2 Migrate:** `migrate-from-live.js` imports a `jsmpeg` slot as a `jsmpeg` definition (it is no
+  longer refused; the checklist flags it). `pf --only slot --slot <id>` must show the protocol
+  `jsmpeg`.
+- **B3 Switch:** `PUT /api/admin/openre/managed/<id>/ingest-authority {"authority":"openre"}` needs
+  the slot offline, the `jsmpeg` protocol in Live's `OPENRE_PROTOCOLS`, and the JSMPEG worker live.
+- **B4 New key:** the broadcaster regenerates the key, then POSTs MPEG-TS to
+  `http://ingest.openre.stream:9736/<key>/<width>/<height>/` (its ffmpeg command, from the profile
+  route). Viewers connect to the `jsmpeg.ws_url` in the session playback descriptor
+  (`GET /api/v1/sessions/<id>/playback`); the viewer canvas shows the stream.
+- **B5/B6:** unchanged (personal-key rotation; a test broadcast checks the viewer and a restream
+  destination — JSMPEG restreams re-encode the worker's MPEG-TS tap).
+- **B-rollback:** `{"authority":"live"}` + `set-definition-state.js --state disabled`, then the
+  broadcaster points ffmpeg back at Live's relay. JSMPEG has **no recording** (parity with Live): a
+  jsmpeg definition with recording on fails the request with `recording is not available for jsmpeg`.
+
 ## Phase C: bookkeeping (AGENT, after A2)
 
 - **ovhost inventory.** Copy the `openre` entry of OpenVibe.Host's `host.example.json` into

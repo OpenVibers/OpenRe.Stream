@@ -12,9 +12,8 @@
   "protocols": {
     "rtmp": "ingest ported (openre-rtmp-ingest)",
     "restream": "RTMP source to RTMP/RTMPS/SRT destinations ported (openre-restream-worker)",
-    "whip": "not ported (worker interface only)",
-    "webrtc-sfu": "not ported (worker interface only)",
-    "jsmpeg": "not ported (worker interface only)"
+    "webrtc": "not ported (workers/webrtc.js: one worker will own WHIP ingest, the SFU and viewer signaling; worker interface only)",
+    "jsmpeg": "worker ported (workers/jsmpeg.js): MPEG-TS POST admission by key, WS viewers, loopback data tap, restream (re-encode), generations/drain; no recording (parity)"
   },
   "capabilities": [
     "openre.stream.read",

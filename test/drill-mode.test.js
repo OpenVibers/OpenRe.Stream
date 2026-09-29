@@ -12,6 +12,7 @@ const { createCoordinator } = require('../server/coordinator');
 const { createRtmpIngest } = require('../workers/rtmp-ingest');
 const { createRestreamWorker } = require('../workers/restream-worker');
 const { createUnportedTransport } = require('../workers/unported-transport');
+const { createJsmpeg } = require('../workers/jsmpeg');
 const { openDb } = require('../server/db');
 const { runtime, bootApi, request, serviceToken, tmpDir, testEnv, child, suite, silent, testDb } = require('./helpers');
 
@@ -45,13 +46,14 @@ t('the coordinator and every transport worker refuse to be created in a drill', 
     drill(() => createCoordinator({ rt, media: null, log: silent }));
     drill(() => createRtmpIngest({ rt, log: silent, exit: () => {} }));
     drill(() => createRestreamWorker({ rt, log: silent, exit: () => {} }));
-    for (const kind of ['webrtc-ingest', 'sfu', 'jsmpeg']) drill(() => createUnportedTransport({ rt, kind, log: silent, exit: () => {} }));
+    drill(() => createUnportedTransport({ rt, kind: 'webrtc', log: silent, exit: () => {} }));
+    drill(() => createJsmpeg({ rt, log: silent, exit: () => {} }));
     assert.strictEqual((await rt.db.prepare('SELECT count(*) AS n FROM workers').get()).n, 0, 'no generation registered');
     assert.strictEqual((await rt.db.prepare('SELECT count(*) AS n FROM leases').get()).n, 0, 'no coordinator lease taken');
 });
 
 t('the entry points exit before opening the database', async () => {
-    for (const script of ['workers/coordinator.js', 'workers/rtmp-ingest.js', 'workers/restream-worker.js', 'workers/sfu.js']) {
+    for (const script of ['workers/coordinator.js', 'workers/rtmp-ingest.js', 'workers/restream-worker.js', 'workers/webrtc.js', 'workers/jsmpeg.js']) {
         const dir = tmpDir();
         const p = child(script, await testEnv(dir, { ...PROD_LIKE, OPENRE_DRILL: '1' }));
         const r = await p.exited;

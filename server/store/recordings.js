@@ -14,6 +14,9 @@ const { newId } = require('../ids');
 const { TYPES } = require('../events');
 const { isTerminal } = require('../state-machine');
 
+// JSMPEG has no recording (Live has none either, decision 8: parity). A jsmpeg definition with
+// recording on gets an explicit failure, never a silent no-op.
+const RECORDING_UNSUPPORTED = 'recording is not available for jsmpeg';
 const BACKOFF_MS = [5000, 15000, 30000, 60000, 120000, 300000];
 const MAX_ATTEMPTS = 10;
 // Media refuses a recording while its disk is critically low and frees space within minutes;
@@ -67,6 +70,29 @@ function createRecordings({ db, config, events, clock, definitions, sessions, lo
         if (!session) return await update(rec.id, { state: 'failed', last_error: 'session missing' });
         const definition = await definitions.row(session.definition_id);
         const ended = isTerminal(session.state) || session.state === 'ending';
+
+        if (session.protocol === 'jsmpeg') {
+            return await db.tx(async () => {
+                const r = await update(rec.id, { state: 'failed', last_error: RECORDING_UNSUPPORTED });
+                await events.enqueue({
+                    event_type: TYPES.recordingFailed,
+                    actor: { type: 'service', id: 'openre' },
+                    subject: { type: 'recording', id: rec.id, revision: 1 },
+                    visibility: 'internal',
+                    priority: 'important',
+                    payload: {
+                        recording_id: rec.id,
+                        session_id: session.id,
+                        stream_id: definition.id,
+                        owner: { type: 'user', id: definition.owner_subject },
+                        protocol: session.protocol,
+                        reason: RECORDING_UNSUPPORTED,
+                        external_refs: definition.external_refs,
+                    },
+                });
+                return r;
+            });
+        }
 
         if (rec.state === 'pending') {
             if (ended) return await update(rec.id, { state: 'cancelled' });

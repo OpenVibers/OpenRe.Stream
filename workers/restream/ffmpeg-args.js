@@ -5,9 +5,9 @@
  * output flags, friendly errors). Kept byte-for-byte equivalent where it matters so a stream that
  * restreams correctly from Live restreams the same way from OpenRe.
  *
- * Only the RTMP source is ported: RTMP → destination is a codec copy (zero CPU). The JSMPEG
- * (MPEG-TS on stdin) and WebRTC (mediasoup PlainRTP → SDP) sources stay in Live until those
- * ingest protocols move; encodingArgs() is here for them and for a future re-encode option.
+ * RTMP → destination is a codec copy (zero CPU); a JSMPEG source (the worker's MPEG-TS data tap,
+ * read over HTTP) is re-encoded with encodingArgs(). The WebRTC (mediasoup PlainRTP → SDP) source
+ * stays in Live until that ingest protocol moves.
  */
 
 const SRT_DEFAULT_LATENCY_MS = 120;
@@ -69,6 +69,19 @@ function rtmpCopyArgs(flvUrl, destUrl) {
     ];
 }
 
+/** MPEG-TS source (JSMPEG data tap) → destination, re-encoded (Live's _startJsmpegRestream). */
+function jsmpegArgs(tsUrl, destUrl, preset, { overrides = {} } = {}) {
+    return [
+        '-hide_banner',
+        '-loglevel', 'warning',
+        '-thread_queue_size', '1024',
+        '-f', 'mpegts',
+        '-i', tsUrl,
+        ...encodingArgs(preset, { hasAudio: true, overrides }),
+        ...outputArgs(destUrl),
+    ];
+}
+
 /** `-progress pipe:1 -stats_period 1` after the global flags: the live ACK and the health line. */
 function withProgress(args) {
     return args[0] === '-hide_banner'
@@ -105,7 +118,8 @@ function encodingArgs(preset, { hasAudio = true, overrides = {} } = {}) {
         '-sc_threshold', '0', '-flags', '+cgop', '-pix_fmt', 'yuv420p', '-threads', '2', '-x264-params', 'nal-hrd=cbr:force-cfr=1'];
     if (preset.scale) args.push('-vf', `scale=${preset.scale}:force_original_aspect_ratio=decrease,pad=${preset.scale}:(ow-iw)/2:(oh-ih)/2`);
     if (fps > 0) args.push('-r', String(fps), '-fps_mode', 'cfr');
-    if (hasAudio) args.push('-map', '0:a:0', '-c:a', 'aac', '-b:a', audioBitrate, '-ar', '48000', '-ac', '2');
+    // The trailing '?' keeps a video-only source (a jsmpeg tap without audio) restreamable.
+    if (hasAudio) args.push('-map', '0:a:0?', '-c:a', 'aac', '-b:a', audioBitrate, '-ar', '48000', '-ac', '2');
     return args;
 }
 
@@ -150,5 +164,5 @@ function redactUrl(value) {
 
 module.exports = {
     QUALITY_PRESETS, PLATFORM_DEFAULT_PRESET, ENCODER_PRESETS, SRT_DEFAULT_LATENCY_MS,
-    isSrtUrl, buildDestUrl, buildSrtUrl, outputArgs, rtmpCopyArgs, withProgress, resolvePreset, customOverrides, encodingArgs, friendlyError, redactUrl, redactText,
+    isSrtUrl, buildDestUrl, buildSrtUrl, outputArgs, rtmpCopyArgs, jsmpegArgs, withProgress, resolvePreset, customOverrides, encodingArgs, friendlyError, redactUrl, redactText,
 };

@@ -14,6 +14,7 @@
  *   openre.output.healthy       a restream output confirmed live          subject output
  *   openre.output.failed        an output gave up (circuit breaker)       subject output
  *   openre.recording.requested  Media accepted a recording request        subject recording
+ *   openre.recording.failed     a recording could not be started          subject recording
  *   openre.key.rotated          an ingest key was rotated                 subject stream
  * Payloads never carry an ingest key or a destination key.
  */
@@ -28,6 +29,7 @@ const TYPES = Object.freeze({
     outputHealthy: 'openre.output.healthy',
     outputFailed: 'openre.output.failed',
     recordingRequested: 'openre.recording.requested',
+    recordingFailed: 'openre.recording.failed',
     keyRotated: 'openre.key.rotated',
 });
 

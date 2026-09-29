@@ -11,7 +11,10 @@ const { newId, isId } = require('../ids');
 const { newIngestKey, hashIngestKey, isIngestKeyShape, hintOf } = require('../secrets');
 const { TYPES } = require('../events');
 
-const PROTOCOLS = Object.freeze(['rtmp', 'whip', 'webrtc', 'jsmpeg']);
+// The definition protocols (T4 decision 2): one name per transport. 'whip' is accepted on input
+// only (API create/update, migrate-from-live) and stored as 'webrtc'.
+const PROTOCOLS = Object.freeze(['rtmp', 'webrtc', 'jsmpeg']);
+const PROTOCOL_ALIASES = Object.freeze({ whip: 'webrtc' });
 const RECORDING_MODES = Object.freeze(['vod', 'clips', 'none']);
 const VISIBILITIES = Object.freeze(['public', 'unlisted', 'private']);
 const REF_SERVICE_RE = /^[a-z][a-z0-9-]{1,39}$/;
@@ -106,7 +109,8 @@ function createDefinitions({ db, config, events, clock }) {
         if (input.title !== undefined || base.title === undefined) out.title = cleanText(input.title, 140, '') || base.title || 'Untitled stream';
         if (input.description !== undefined) out.description = cleanText(input.description, 2000, '');
         if (input.protocols !== undefined) {
-            const p = Array.isArray(input.protocols) ? [...new Set(input.protocols.map(String))] : null;
+            const named = Array.isArray(input.protocols) ? input.protocols.map(String).map(x => PROTOCOL_ALIASES[x] || x) : null;
+            const p = named ? [...new Set(named)] : null;
             if (!p || !p.length || p.some(x => !PROTOCOLS.includes(x))) throw new StoreError(400, 'openre.invalid_protocols', `protocols must be a non-empty subset of ${PROTOCOLS.join(', ')}`);
             out.protocols = JSON.stringify(p);
         }
@@ -255,6 +259,15 @@ function createDefinitions({ db, config, events, clock }) {
         if (definition.protocols.includes('rtmp')) {
             out.rtmp = {
                 url: `rtmp://${r.publicHost}${portSuffix}/live`,
+                key_hint: active ? active.hint : null,
+                key_id: active ? active.id : null,
+            };
+        }
+        if (definition.protocols.includes('jsmpeg')) {
+            const j = config.jsmpeg;
+            out.jsmpeg = {
+                // The broadcaster's ffmpeg POSTs MPEG-TS to <url>/<key>/<width>/<height>/.
+                url: `http://${j.publicHost}:${j.publicPort}`,
                 key_hint: active ? active.hint : null,
                 key_id: active ? active.id : null,
             };
