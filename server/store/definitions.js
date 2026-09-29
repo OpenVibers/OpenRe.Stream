@@ -272,6 +272,19 @@ function createDefinitions({ db, config, events, clock }) {
                 key_id: active ? active.id : null,
             };
         }
+        if (definition.protocols.includes('webrtc')) {
+            const w = config.webrtc;
+            const tls = w.publicPort === 443;
+            const host = `${w.publicHost}${tls ? '' : `:${w.publicPort}`}`;
+            out.webrtc = {
+                // WHIP ingest (POST the SDP offer to <whip_url>/<key>) and the browser broadcaster's
+                // signaling endpoint (join /b/<key> and run the mediasoup-client sfu-* flow).
+                whip_url: `${tls ? 'https' : 'http'}://${host}/whip`,
+                signaling_url: `${tls ? 'wss' : 'ws'}://${host}/b`,
+                key_hint: active ? active.hint : null,
+                key_id: active ? active.id : null,
+            };
+        }
         return out;
     }
 

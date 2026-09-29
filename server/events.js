@@ -9,6 +9,7 @@
  *
  * Event types (source "openre"):
  *   openre.session.started      a session reached live                    subject ingest_session
+ *   openre.session.updated      a live session's thumbnail_url changed     subject ingest_session
  *   openre.session.ended        a session that had been live ended        subject ingest_session
  *   openre.session.failed       a session failed (worker lost, error)     subject ingest_session
  *   openre.output.healthy       a restream output confirmed live          subject output
@@ -24,6 +25,7 @@ const { createEventsClient, createPgOutbox } = require('openvibe-sdk/events');
 
 const TYPES = Object.freeze({
     sessionStarted: 'openre.session.started',
+    sessionUpdated: 'openre.session.updated',
     sessionEnded: 'openre.session.ended',
     sessionFailed: 'openre.session.failed',
     outputHealthy: 'openre.output.healthy',

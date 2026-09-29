@@ -84,6 +84,7 @@ function createV1Router({ rt, auth }) {
             failure_reason: s.failure_reason,
             media_info: s.media_info,
             viewers: s.viewers || 0,
+            thumbnail_url: s.thumbnail_url || null,
             revision: s.revision,
             created_at: iso(s.created_at),
             live_at: iso(s.live_at),

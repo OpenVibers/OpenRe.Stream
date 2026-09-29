@@ -77,9 +77,9 @@ cmd_workers() {
     local sha=${1:-$(latest_release)}
     [ -n "$sha" ] && [ -d "$ROOT/releases/$sha" ] || die "no release $sha"
     say "starting worker generation from release $sha (older generations drain by themselves)"
-    systemctl enable --now "openre-rtmp-ingest@$sha.service" "openre-restream-worker@$sha.service" "openre-jsmpeg@$sha.service"
+    systemctl enable --now "openre-rtmp-ingest@$sha.service" "openre-restream-worker@$sha.service" "openre-jsmpeg@$sha.service" "openre-webrtc@$sha.service"
     # Disable (not stop) older instances so a reboot does not bring them back; they exit on their own.
-    for unit in $(systemctl list-units --plain --no-legend 'openre-rtmp-ingest@*' 'openre-restream-worker@*' 'openre-jsmpeg@*' | awk '{print $1}'); do
+    for unit in $(systemctl list-units --plain --no-legend 'openre-rtmp-ingest@*' 'openre-restream-worker@*' 'openre-jsmpeg@*' 'openre-webrtc@*' | awk '{print $1}'); do
         case "$unit" in *"@$sha.service") ;; *) systemctl disable "$unit" >/dev/null 2>&1 || true; say "draining: $unit";; esac
     done
 }

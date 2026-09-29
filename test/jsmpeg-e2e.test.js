@@ -195,7 +195,9 @@ t('the JSMPEG data tap restreams to a destination', async () => {
 t('recording is refused with a clear reason, without calling Media', async () => {
     const s = await waitFor(async () => { const d = await detail(sessionA.id); return d.recording && d.recording.state === 'failed' ? d : null; }, { what: 'recording failed', timeoutMs: 10000 });
     assert.strictEqual(s.recording.last_error, 'recording is not available for jsmpeg');
-    assert.strictEqual(mediaCalls.length, 0, 'Media was never asked to record a jsmpeg session');
+    // The worker does upload live-thumbnail objects (decision 4: `POST /api/v2/<app>/objects`), so
+    // only the recording endpoints must be untouched.
+    assert.strictEqual(mediaCalls.filter((c) => !/\/objects$/.test(c.url)).length, 0, 'Media was never asked to record a jsmpeg session');
 });
 
 t('a second publisher with the same key is refused while the first is live', async () => {

@@ -24,7 +24,7 @@ const MAX_ATTEMPTS = 10;
 const DISK_RETRY_MS = 5 * 60 * 1000;
 const DISK_MAX_ATTEMPTS = 12;
 
-function createRecordings({ db, config, events, clock, definitions, sessions, log = console }) {
+function createRecordings({ db, config, events, clock, definitions, sessions, workers, log = console, fetchImpl = globalThis.fetch }) {
     const now = () => clock.now();
     const q = {
         get: db.prepare('SELECT * FROM recordings WHERE id = ?'),
@@ -65,6 +65,113 @@ function createRecordings({ db, config, events, clock, definitions, sessions, lo
         return r ? r.id : undefined;
     }
 
+    /** The egress base URL of the worker that owns this session (its RTP descriptor API), or null. */
+    async function egressBase(session) {
+        const owner = session.worker_id ? await workers.get(session.worker_id) : null;
+        const ep = (owner && owner.endpoints) || {};
+        return ep.egressPort ? `http://127.0.0.1:${ep.egressPort}` : null;
+    }
+
+    async function fetchJson(url, opts) {
+        const res = await fetchImpl(url, { ...opts, signal: AbortSignal.timeout(10000) });
+        const text = await res.text().catch(() => '');
+        let json = null;
+        if (text) { try { json = JSON.parse(text); } catch { json = null; } }
+        if (!res.ok) { const e = new Error((json && json.error) || `egress ${res.status}`); e.status = res.status; throw e; }
+        return json;
+    }
+
+    /** Stop the worker sending RTP to Media: close the PlainRTP consumer it opened for us. */
+    async function closeWebrtcEgress(rec, session) {
+        if (!rec.rtp_handle) return;
+        const base = await egressBase(session);
+        if (base) { try { await fetchJson(`${base}/rtp/${session.id}/${rec.rtp_handle}`, { method: 'DELETE' }); } catch { /* best effort */ } }
+        await update(rec.id, { rtp_handle: null });
+        rec.rtp_handle = null;
+    }
+
+    /**
+     * Record a webrtc session through Media's RTP ingest (brief §4.4): Media allocates a video (and
+     * optional audio) RTP/RTCP port pair, the owning worker opens a PlainRTP consumer sending to it,
+     * and on finalize the consumer is closed and ingestRtpStop/finalize close the Media recording.
+     */
+    async function stepWebrtc(rec, media, session, definition) {
+        const ended = isTerminal(session.state) || session.state === 'ending';
+        const base = await egressBase(session);
+
+        if (rec.state === 'pending') {
+            if (ended) return await update(rec.id, { state: 'cancelled' });
+            if (!base) return await retryLater(rec, new Error('the WebRTC worker exposes no egress endpoint yet'));
+            let desc;
+            try { desc = await fetchJson(`${base}/rtp/${session.id}/describe`); } catch (err) { return await retryLater(rec, err); }
+            if (!desc.video) return await retryLater(rec, new Error('no WebRTC video producer yet'));
+            let vodId = rec.media_vod_id;
+            try {
+                if (!vodId) {
+                    const liveUser = refOf(definition, 'live', 'user');
+                    const liveSlot = refOf(definition, 'live', 'managed_stream');
+                    const out = await media.createVod({
+                        title: definition.title || 'Stream Recording',
+                        user_id: liveUser != null ? Number(liveUser) : undefined,
+                        managed_stream_id: liveSlot != null ? Number(liveSlot) : undefined,
+                        clips_only: rec.mode === 'clips' || undefined,
+                        visibility: definition.recording_visibility,
+                        meta: { source: 'openre', openre_session_id: session.id, openre_stream_id: definition.id, protocol: 'webrtc', mode: rec.mode },
+                    });
+                    vodId = String(out && out.id);
+                    rec = await update(rec.id, { media_vod_id: vodId, state: 'requested' });
+                }
+                const ports = await media.ingestRtpStart(vodId, { video: desc.video, audio: desc.audio || undefined });
+                const videoPort = ports && (ports.videoPort || ports.video_port);
+                const audioPort = ports && (ports.audioPort || ports.audio_port);
+                if (!videoPort) throw new Error('Media returned no RTP ports for the recording');
+                const egress = await fetchJson(`${base}/rtp/${session.id}?vport=${videoPort}${audioPort ? `&aport=${audioPort}` : ''}`);
+                await update(rec.id, { rtp_handle: egress.handle || null, rtp_video_port: videoPort, rtp_audio_port: audioPort || null });
+            } catch (err) {
+                log.warn(`[recording] ${rec.id} (webrtc) request failed: ${err.message}`);
+                if (vodId) await media.deleteVod(vodId).catch(() => {});
+                await update(rec.id, { media_vod_id: null, state: 'pending' });
+                return await retryLater(await q.get.get(rec.id), err, { disk: /disk/i.test(String(err.message)) });
+            }
+            return await db.tx(async () => {
+                const r = await update(rec.id, { state: 'recording', attempts: 0, last_error: null, next_attempt_at: 0 });
+                await events.enqueue({
+                    event_type: TYPES.recordingRequested,
+                    actor: { type: 'service', id: 'openre' },
+                    subject: { type: 'recording', id: rec.id, revision: 1 },
+                    visibility: 'internal',
+                    priority: 'important',
+                    payload: {
+                        recording_id: rec.id,
+                        session_id: session.id,
+                        stream_id: definition.id,
+                        owner: { type: 'user', id: definition.owner_subject },
+                        mode: rec.mode,
+                        media: { app: config.media.appId, vod_id: r.media_vod_id },
+                        external_refs: definition.external_refs,
+                    },
+                });
+                return r;
+            });
+        }
+
+        if (rec.state === 'requested') return await update(rec.id, { state: 'pending' });
+
+        if (rec.state === 'recording' && ended) rec = await update(rec.id, { state: 'finalizing' });
+        if (rec.state === 'finalizing') {
+            await closeWebrtcEgress(rec, session);
+            try { await media.ingestRtpStop(rec.media_vod_id); } catch (err) { if (err.status !== 409) return await retryLater(rec, err); }
+            try {
+                await media.finalizeVod(rec.media_vod_id);
+                if (rec.mode === 'clips') await media.deleteVod(rec.media_vod_id).catch(() => {});
+            } catch (err) {
+                if (err.status !== 409) return await retryLater(rec, err);
+            }
+            return await update(rec.id, { state: 'finalized', last_error: null });
+        }
+        return rec;
+    }
+
     async function step(rec, media) {
         const session = await sessions.get(rec.session_id);
         if (!session) return await update(rec.id, { state: 'failed', last_error: 'session missing' });
@@ -93,6 +200,8 @@ function createRecordings({ db, config, events, clock, definitions, sessions, lo
                 return r;
             });
         }
+
+        if (session.protocol === 'webrtc') return await stepWebrtc(rec, media, session, definition);
 
         if (rec.state === 'pending') {
             if (ended) return await update(rec.id, { state: 'cancelled' });

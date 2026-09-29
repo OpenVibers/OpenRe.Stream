@@ -373,7 +373,62 @@ Identical to B1–B6 with these substitutions:
   broadcaster points ffmpeg back at Live's relay. JSMPEG has **no recording** (parity with Live): a
   jsmpeg definition with recording on fails the request with `recording is not available for jsmpeg`.
 
-## Phase C: bookkeeping (AGENT, after A2)
+## WebRTC protocol cutover (WHIP + the SFU + viewer signaling)
+
+`workers/webrtc.js` carries the whole WebRTC stack (T4 decision 1: mediasoup is single-process, so
+ingest and consumption live together): WHIP ingest, the mediasoup producers/consumers, and the
+viewer signaling Live's broadcast/watch pages speak. Restream re-encodes a PlainRTP consumer's SDP,
+recording goes through Media's RTP ingest, and thumbnails are produced by the worker. This has to be
+done **once** (the worker generation and its ports), then per slot like every protocol.
+
+### W-A once (AGENT)
+
+- **Ports/firewall.** Open `9936/tcp` (WHIP + signaling; or put it behind nginx, see below) AND the
+  mediasoup RTC range `10200–10300/udp` (never Live's 10000–10100). `ingest.openre.stream` stays the
+  DNS-only record RTMP already uses; raw UDP cannot go through Cloudflare's proxy.
+- **Env (`/etc/openvibe/openre.env`).** `OPENRE_WEBRTC_BIND=0.0.0.0`, `MEDIASOUP_ANNOUNCED_IP=<this
+  host's public IP>` (required in production — the worker refuses to start without it),
+  `OPENRE_WEBRTC_PUBLIC_HOST=ingest.openre.stream`, `OPENRE_MEDIASOUP_MIN_PORT/MAX_PORT=10200/10300`.
+  Each worker generation picks its own loopback egress port from `OPENRE_WEBRTC_INTERNAL_PORT_MIN..MAX`.
+- **nginx (Opus).** Install the reference `ingest.openre.stream` server block in
+  `deploy/nginx/openre.stream.conf` to terminate TLS in front of the worker's 9936, with the
+  `Upgrade`/`Connection` map for `/b/*` and `/w/*`. Cert must cover `ingest.openre.stream`.
+- **Deploy the worker.** `deploy.sh workers <sha>` now also starts `openre-webrtc@<sha>`; older
+  generations drain and exit by themselves.
+- **Media grants.** Thumbnails upload as Media objects under namespace `live` (Media grant
+  `media.object.upload` ns `live`); RTP recording uses `ingestRtpStart`/`ingestRtpStop` (Media ports
+  12000–12199, already allocated by Media). Confirm both for OpenRe's token before switching a slot.
+- **Live:** add `webrtc` to `OPENRE_PROTOCOLS` in `server/openre/authority.js` **only when the
+  `openre-webrtc` generation is ready**, and point the broadcast/watch pages at the OpenRe signaling
+  endpoints (`sfu-*` messages are unchanged; the page reads `playback.webrtc.signaling_url`).
+
+### W-B1–W-B6 per slot (OWNER + broadcaster + AGENT)
+
+- **B1 Preconditions:** the slot's `managed_streams.protocol` is `webrtc` (or `whip`), the broadcast
+  page sends `sfu-*` and not the legacy P2P messages, the slot is offline, `webrtc` is in Live's
+  `OPENRE_PROTOCOLS`, and `openre-webrtc` is ready.
+- **B2 Import:** `migrate-from-live.js` already imports `webrtc`/`whip` slots (protocols
+  `['webrtc']`).
+- **B3 Switch:** the same `PUT /api/admin/openre/managed/:id/ingest-authority {"authority":"openre"}`
+  (rotates Live's own key in-transaction). Live's WHIP handler must refuse the slot key once
+  `webrtc` is in `OPENRE_PROTOCOLS` (brief §4.5).
+- **B4 Broadcaster:** regenerate the key, then either
+  - **WHIP:** POST an SDP offer to `https://ingest.openre.stream/whip/<key>` (Bearer optional, must
+    match) → `201` + the answer + `Location: /whip/session/<id>`; trickle with `PATCH`, end with
+    `DELETE`. The session goes live when ICE connects.
+  - **Browser:** connect `ws(s)://ingest.openre.stream/b/<key>` and run the mediasoup-client
+    `sfu-get-capabilities → sfu-create-transport → sfu-connect-transport → sfu-produce` flow; the
+    session goes live on the first video producer.
+  - Viewers read the session playback descriptor (`webrtc.signaling_url`, keyed by playback id) and
+    run `watch → sfu-viewer-create-transport → sfu-viewer-connect-transport → sfu-viewer-consume`.
+- **B5/B6:** personal-key rotation unchanged; a test broadcast checks a viewer, a restream
+  destination (re-encoded from the PlainRTP/SDP egress), a recording (Media RTP ingest) and a
+  thumbnail (`thumbnail_url` on the session and in `openre.session.started|updated`).
+- **B-rollback:** `{"authority":"live"}` + `set-definition-state.js --state disabled`, then the
+  broadcaster points WHIP/browser back at Live. Remove `webrtc` from `OPENRE_PROTOCOLS` if the whole
+  protocol rolls back.
+
+
 
 - **ovhost inventory.** Copy the `openre` entry of OpenVibe.Host's `host.example.json` into
   `/etc/openvibe/host.json`: `workerUnits`, and the drill block with `OPENRE_DRILL`. Then run

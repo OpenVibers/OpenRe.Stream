@@ -8,17 +8,36 @@
  */
 const { spawn } = require('child_process');
 const fs = require('fs');
-const { rtmpCopyArgs, jsmpegArgs, withProgress, buildDestUrl, resolvePreset, customOverrides, friendlyError, redactUrl, redactText } = require('./ffmpeg-args');
+const os = require('os');
+const path = require('path');
+const dgram = require('dgram');
+const { rtmpCopyArgs, jsmpegArgs, webrtcArgs, withProgress, buildDestUrl, resolvePreset, customOverrides, friendlyError, redactUrl, redactText } = require('./ffmpeg-args');
 const { validateDestinationUrl, checkResolvedHost } = require('../../server/destination-url');
 
+/** A free even UDP port (the WebRTC source's ffmpeg takes it and its +1 for RTCP). */
+function freeUdpPort() {
+    return new Promise((resolve, reject) => {
+        const s = dgram.createSocket('udp4');
+        s.once('error', reject);
+        s.bind(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); });
+    });
+}
+async function allocateUdpPortPair() { const p = await freeUdpPort(); return p % 2 === 0 ? p : await freeUdpPort(); }
+
 class OutputRunner {
-    constructor({ outputId, destinationId, inputUrl, source = 'rtmp', store, config, log = console, spawnImpl = spawn, lookup, workerId = null }) {
+    constructor({ outputId, destinationId, inputUrl, source = 'rtmp', sessionId = null, egressBase = null, store, config, log = console, spawnImpl = spawn, lookup, workerId = null, fetchImpl = globalThis.fetch }) {
         this.outputId = outputId;
         this.workerId = workerId;
         this.secrets = [];
         this.destinationId = destinationId;
         this.inputUrl = inputUrl;
         this.source = source;
+        this.sessionId = sessionId;
+        this.egressBase = egressBase;
+        this.fetchImpl = fetchImpl;
+        this.sdpPath = null;
+        this.egressHandle = null;
+        this.hasAudio = false;
         this.store = store;
         this.config = config;
         this.log = log;
@@ -71,13 +90,52 @@ class OutputRunner {
         if (!destUrl) return this.fail('destination has no usable URL or stream key', { cooldown: false });
         this.preset = resolvePreset(dest);
         this.overrides = customOverrides(dest);
+        if (this.source === 'webrtc') {
+            const prep = await this.prepareWebrtc();
+            if (this.stopped) return;
+            // No source yet (the producer has not appeared): retry with the usual backoff.
+            if (!prep.ok) return this.scheduleRestart(0, prep.error);
+        }
         this.spawn(destUrl);
+    }
+
+    /**
+     * Open a PlainRTP egress on the worker that holds this session and write the SDP file ffmpeg
+     * reads. The consumer (and its RTP stream to the ports ffmpeg will bind) is opened once and kept
+     * across ffmpeg restarts, so only one egress consumer exists per output run.
+     */
+    async prepareWebrtc() {
+        if (this.sdpPath && this.egressHandle) return { ok: true };
+        if (!this.egressBase || !this.sessionId) return { ok: false, error: 'no WebRTC egress endpoint for this session' };
+        let res;
+        try {
+            const port = await allocateUdpPortPair();
+            const r = await this.fetchImpl(`${this.egressBase}/rtp/${this.sessionId}?vport=${port}&aport=${port + 2}`, { signal: AbortSignal.timeout(8000) });
+            if (!r.ok) { const body = await r.json().catch(() => ({})); return { ok: false, error: `WebRTC source not ready (${body.error || r.status})` }; }
+            res = await r.json();
+        } catch (err) {
+            return { ok: false, error: `WebRTC egress request failed: ${err.message}` };
+        }
+        const sdpPath = path.join(os.tmpdir(), `openre-restream-${this.outputId}.sdp`);
+        try { fs.writeFileSync(sdpPath, res.sdp, 'utf8'); } catch (err) { return { ok: false, error: `SDP not writable: ${err.message}` }; }
+        this.sdpPath = sdpPath;
+        this.egressHandle = res.handle;
+        this.hasAudio = Array.isArray(res.transports) && res.transports.length > 1;
+        return { ok: true };
+    }
+
+    async cleanupEgress() {
+        if (this.egressHandle && this.egressBase) { try { await this.fetchImpl(`${this.egressBase}/rtp/${this.sessionId}/${this.egressHandle}`, { method: 'DELETE', signal: AbortSignal.timeout(5000) }); } catch { /* best effort */ } }
+        this.egressHandle = null;
+        if (this.sdpPath) { try { fs.unlinkSync(this.sdpPath); } catch { /* gone */ } this.sdpPath = null; }
     }
 
     spawn(destUrl) {
         const args = withProgress(this.source === 'jsmpeg'
             ? jsmpegArgs(this.inputUrl, destUrl, this.preset || resolvePreset({}), this.overrides ? { overrides: this.overrides } : {})
-            : rtmpCopyArgs(this.inputUrl, destUrl));
+            : this.source === 'webrtc'
+                ? webrtcArgs(this.sdpPath, destUrl, this.preset || resolvePreset({}), { hasAudio: this.hasAudio, overrides: this.overrides || {} })
+                : rtmpCopyArgs(this.inputUrl, destUrl));
         const rtmps = destUrl.startsWith('rtmps://');
         const bin = rtmps && this.o.ffmpegOpenSslPath && fs.existsSync(this.o.ffmpegOpenSslPath) ? this.o.ffmpegOpenSslPath : this.o.ffmpegPath;
         this.note('info', `starting ffmpeg → ${redactUrl(destUrl)}${bin !== this.o.ffmpegPath ? ' (openssl build)' : ''}`);
@@ -219,12 +277,14 @@ class OutputRunner {
         this.status = 'failed';
         this.note('error', `output failed: ${message}${cooldownMinutes ? ` (destination cooling down ${cooldownMinutes} min)` : ''}`);
         this.report({ state: 'failed', last_error: message, ended_at: Date.now(), next_restart_at: null, cooldown_minutes: cooldownMinutes });
+        this.cleanupEgress().catch(() => {});
     }
 
     stop(reason = 'stopped') {
         if (this.stopped && !this.proc) return;
         this.stopped = true;
         this.clearTimers();
+        this.cleanupEgress().catch(() => {});
         const proc = this.proc;
         this.proc = null;
         if (proc) {

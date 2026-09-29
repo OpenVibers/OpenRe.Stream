@@ -31,6 +31,9 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
         // Viewer counts live inside media_info so no column is needed: merge, never replace, so the
         // width/height the JSMPEG ingest path reported survive.
         viewers: db.prepare(`UPDATE ingest_sessions SET media_info = jsonb_set(COALESCE(NULLIF(media_info, '')::jsonb, '{}'::jsonb), '{viewers}', to_jsonb(?::bigint), true)::text WHERE id = ? AND state IN ${OPEN}`),
+        // The live frame the owning worker uploaded to Media (decision 4): merged, like viewers, so
+        // the width/height a protocol reported survive.
+        thumbnail: db.prepare(`UPDATE ingest_sessions SET media_info = jsonb_set(COALESCE(NULLIF(media_info, '')::jsonb, '{}'::jsonb), '{thumbnail_url}', to_jsonb(?::text), true)::text WHERE id = ? AND state IN ${OPEN}`),
         requestEnd: db.prepare(`UPDATE ingest_sessions SET desired_state = 'end', end_requested_by = ?, updated_at = ? WHERE id = ? AND state IN ${OPEN}`),
         endRequests: db.prepare(`SELECT * FROM ingest_sessions WHERE worker_id = ? AND desired_state = 'end' AND state IN ${OPEN}`),
         ofWorker: db.prepare(`SELECT * FROM ingest_sessions WHERE worker_id = ? AND state IN ${OPEN}`),
@@ -50,7 +53,7 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
     function shape(s) {
         if (!s) return null;
         const media_info = parseJson(s.media_info, null);
-        return { ...s, media_info, viewers: (media_info && Number(media_info.viewers)) || 0 };
+        return { ...s, media_info, viewers: (media_info && Number(media_info.viewers)) || 0, thumbnail_url: (media_info && media_info.thumbnail_url) || null };
     }
 
     async function get(id) {
@@ -138,7 +141,7 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
         const session = shape(await q.get.get(current.id));
         const definition = await definitions.row(session.definition_id);
         if (to === 'live') {
-            await events.enqueue(await envelopeFor(TYPES.sessionStarted, session, definition, { playback: await playback(session) }));
+            await events.enqueue(await envelopeFor(TYPES.sessionStarted, session, definition, { thumbnail_url: session.thumbnail_url || null, playback: await playback(session) }));
         } else if (to === 'ended' && session.live_at) {
             await events.enqueue(await envelopeFor(TYPES.sessionEnded, session, definition, {
                 ended_at: iso(session.ended_at),
@@ -201,6 +204,7 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
             state: session.state,
             live: session.state === 'live',
             worker: worker ? { id: worker.id, kind: worker.kind, generation: worker.generation, state: worker.state } : null,
+            thumbnail_url: session.thumbnail_url || null,
             flv: null,
             rtmp: null,
             webrtc: null,
@@ -228,6 +232,14 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
         if (session.protocol === 'rtmp' && ep.rtmpPlayPort) {
             descriptor.rtmp = { internal_url: `rtmp://127.0.0.1:${ep.rtmpPlayPort}/live/${session.id}` };
         }
+        if (session.protocol === 'webrtc' && ep.publicPort) {
+            // The viewer signaling endpoint, keyed by the session's playback id (never the key), and
+            // the mediasoup announced IP clients must be able to reach for media to flow.
+            descriptor.webrtc = {
+                signaling_url: `ws://${config.webrtc.publicHost}:${ep.publicPort}/w/${session.id}`,
+                announced_ip: config.webrtc.media.announcedIp || null,
+            };
+        }
         return descriptor;
     }
 
@@ -242,6 +254,22 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
         playback,
         setMediaInfo: async (id, info) => (await q.mediaInfo.run(JSON.stringify(info), id)).changes > 0,
         setViewers: async (id, count) => (await q.viewers.run(Math.max(0, Number(count) || 0), id)).changes > 0,
+        /**
+         * Record the live frame's Media URL (decision 4) and emit openre.session.updated. A no-op
+         * when the URL did not change, so the periodic grab does not publish an event every interval.
+         */
+        setThumbnail: async (id, url) => await db.tx(async () => {
+            const current = await q.get.get(id);
+            if (!current) return false;
+            const currentUrl = (parseJson(current.media_info, {}) || {}).thumbnail_url || null;
+            if (currentUrl === url) return false;
+            const changed = (await q.thumbnail.run(url || '', id)).changes > 0;
+            if (!changed) return false;
+            const session = shape(await q.get.get(id));
+            const definition = await definitions.row(session.definition_id);
+            await events.enqueue(await envelopeFor(TYPES.sessionUpdated, session, definition, { thumbnail_url: url || null }));
+            return true;
+        }),
         transitions: async (id) => await q.transitions.all(id),
         endRequestsFor: async (workerId) => (await q.endRequests.all(workerId)).map(shape),
         ofWorker: async (workerId) => (await q.ofWorker.all(workerId)).map(shape),

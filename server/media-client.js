@@ -58,8 +58,44 @@ function createMediaClient({ config, fetchImpl = globalThis.fetch }) {
         appId: config.media.appId,
         createVod: async (fields) => await request('POST', '/vods', { body: fields }),
         ingestRtmp: async (vodId, rtmpUrl) => await request('POST', `/vods/${encodeURIComponent(vodId)}/ingest/rtmp`, { body: { rtmp_url: rtmpUrl } }),
+        /** Media RTP ingest: allocate a local RTP/RTCP port pair Media listens on (Live server/streaming/recorder.js). */
+        ingestRtpStart: async (vodId, { video, audio } = {}) => await request('POST', `/vods/${encodeURIComponent(vodId)}/ingest/rtp/start`, { body: { video, audio }, timeoutMs: 30000 }),
+        ingestRtpStop: async (vodId) => await request('POST', `/vods/${encodeURIComponent(vodId)}/ingest/rtp/stop`, { timeoutMs: 30000 }),
         finalizeVod: async (vodId) => await request('POST', `/vods/${encodeURIComponent(vodId)}/finalize`, { timeoutMs: 30000 }),
         deleteVod: async (vodId) => await request('DELETE', `/vods/${encodeURIComponent(vodId)}`),
+        /**
+         * Upload bytes as a Media object (canonical object API /api/v2/:app/objects, Live/Media:
+         * docs/object-model.md): init → presigned PUT → complete. Used for live thumbnails under
+         * the `live` namespace (grant media.object.upload ns live). Returns the object's public URL.
+         */
+        uploadObject: async ({ namespace, kind = 'image', visibility = 'public', mimeType, filename, bytes, metadata } = {}) => {
+            const objectsBase = `${config.media.url}/api/v2/${encodeURIComponent(config.media.appId)}/objects`;
+            const headers = { Accept: 'application/json', ...(await authHeader()), 'Content-Type': 'application/json' };
+            const post = async (url, body) => {
+                const res = await fetchImpl(url, { method: 'POST', headers, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(30000) });
+                const text = await res.text().catch(() => '');
+                let json = null;
+                if (text) { try { json = JSON.parse(text); } catch { json = null; } }
+                if (!res.ok) throw new MediaError((json && (json.error || json.detail)) || `Media ${res.status} on POST ${url}`, res.status, json);
+                return json;
+            };
+            const init = await post(objectsBase, {
+                kind, namespace, visibility, mime_type: mimeType, filename,
+                size_bytes: bytes.length, metadata: { source: 'openre', ...(metadata || {}) },
+            });
+            const upload = init && init.upload;
+            if (!upload || !upload.url) throw new MediaError('Media returned no upload URL for the object', 0, init);
+            const put = await fetchImpl(upload.url, {
+                method: upload.method || 'PUT',
+                headers: { 'Content-Type': mimeType || 'application/octet-stream', 'Content-Length': String(bytes.length) },
+                body: bytes,
+                signal: AbortSignal.timeout(30000),
+            });
+            if (!put.ok) throw new MediaError(`Media object upload ${put.status}`, put.status, null);
+            const done = await post(upload.complete_url);
+            const object = (done && done.object) || done || {};
+            return { id: object.id || init.id, url: object.public_url || object.publicUrl || null };
+        },
     };
 }
 

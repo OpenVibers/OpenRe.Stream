@@ -30,13 +30,13 @@ function serializable(db) {
     });
 }
 
-function createStore({ db, config, events, clock, box, log = console }) {
+function createStore({ db, config, events, clock, box, log = console, fetchImpl = globalThis.fetch }) {
     db = serializable(db);
     const definitions = createDefinitions({ db, config, events, clock });
     const workers = createWorkers({ db, config, clock });
     const sessions = createSessions({ db, config, events, clock, definitions, workers });
     const outputs = createOutputs({ db, config, events, clock, box, definitions, sessions });
-    const recordings = createRecordings({ db, config, events, clock, definitions, sessions, log });
+    const recordings = createRecordings({ db, config, events, clock, definitions, sessions, workers, log, fetchImpl });
     return { definitions, workers, sessions, outputs, recordings };
 }
 
@@ -44,7 +44,7 @@ async function openRuntime({ config, clock = { now: () => Date.now() }, fetchImp
     db = serializable(db || await openDb(config, { log }));
     const events = createEvents({ config, db, fetchImpl, now: () => clock.now(), log });
     const box = createBox({ key: config.secretsKey, previous: config.secretsKeyPrevious });
-    const store = createStore({ db, config, events, clock, box, log });
+    const store = createStore({ db, config, events, clock, box, log, fetchImpl });
     return { db, events, box, store, clock, config };
 }
 

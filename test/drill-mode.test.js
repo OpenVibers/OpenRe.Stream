@@ -11,7 +11,7 @@ const { createMediaClient } = require('../server/media-client');
 const { createCoordinator } = require('../server/coordinator');
 const { createRtmpIngest } = require('../workers/rtmp-ingest');
 const { createRestreamWorker } = require('../workers/restream-worker');
-const { createUnportedTransport } = require('../workers/unported-transport');
+const { createWebrtc } = require('../workers/webrtc');
 const { createJsmpeg } = require('../workers/jsmpeg');
 const { openDb } = require('../server/db');
 const { runtime, bootApi, request, serviceToken, tmpDir, testEnv, child, suite, silent, testDb } = require('./helpers');
@@ -46,7 +46,7 @@ t('the coordinator and every transport worker refuse to be created in a drill', 
     drill(() => createCoordinator({ rt, media: null, log: silent }));
     drill(() => createRtmpIngest({ rt, log: silent, exit: () => {} }));
     drill(() => createRestreamWorker({ rt, log: silent, exit: () => {} }));
-    drill(() => createUnportedTransport({ rt, kind: 'webrtc', log: silent, exit: () => {} }));
+    drill(() => createWebrtc({ rt, log: silent, exit: () => {} }));
     drill(() => createJsmpeg({ rt, log: silent, exit: () => {} }));
     assert.strictEqual((await rt.db.prepare('SELECT count(*) AS n FROM workers').get()).n, 0, 'no generation registered');
     assert.strictEqual((await rt.db.prepare('SELECT count(*) AS n FROM leases').get()).n, 0, 'no coordinator lease taken');

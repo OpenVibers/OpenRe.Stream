@@ -219,7 +219,7 @@ function checklist(report, { openreUrl = 'https://openre.stream', rtmpUrl } = {}
             if (s.reason && s.status !== 'imported') lines.push(`- ${s.status}: ${s.reason}`);
             if (s.status === 'imported') {
                 if (s.protocol === 'webrtc' || s.protocol === 'whip') {
-                    lines.push(`- Slot protocol is ${s.protocol}${s.streaming_method ? ` / ${s.streaming_method}` : ''}: the webrtc worker is not ported yet; leave this slot on Live until it ships.`);
+                    lines.push(`- Slot protocol is ${s.protocol}${s.streaming_method ? ` / ${s.streaming_method}` : ''}: switch it after the WebRTC worker is live (docs/cutover.md, WebRTC; WHIP ingest + the mediasoup SFU + viewer signaling).`);
                 } else if (s.protocol === 'jsmpeg') {
                     lines.push(`- Slot protocol is jsmpeg${s.streaming_method ? ` / ${s.streaming_method}` : ''}: switch it after the JSMPEG worker generation is running (docs/cutover.md, JSMPEG).`);
                 }

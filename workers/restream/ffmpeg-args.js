@@ -6,8 +6,8 @@
  * restreams correctly from Live restreams the same way from OpenRe.
  *
  * RTMP → destination is a codec copy (zero CPU); a JSMPEG source (the worker's MPEG-TS data tap,
- * read over HTTP) is re-encoded with encodingArgs(). The WebRTC (mediasoup PlainRTP → SDP) source
- * stays in Live until that ingest protocol moves.
+ * read over HTTP) is re-encoded with encodingArgs(). A WebRTC source is mediasoup PlainRTP read
+ * from an SDP file the owning worker wrote (rtpInputArgs/webrtcArgs), also re-encoded.
  */
 
 const SRT_DEFAULT_LATENCY_MS = 120;
@@ -89,6 +89,32 @@ function withProgress(args) {
         : ['-progress', 'pipe:1', ...args];
 }
 
+/**
+ * ffmpeg input flags for a PlainRTP consumer described by an SDP file (Live's
+ * RestreamManager._startWebrtcRestream): enough analyze/probe room and reorder space that a VP8
+ * keyframe is never dropped as "old packet received too late" (which would leave the encoder with
+ * no size and never go live). Kept byte-for-byte with Live's working flags.
+ */
+function rtpInputArgs(sdpPath) {
+    return [
+        '-protocol_whitelist', 'file,rtp,udp',
+        '-thread_queue_size', '2048',
+        '-analyzeduration', '10000000',
+        '-probesize', '10000000',
+        '-reorder_queue_size', '2048',
+        '-use_wallclock_as_timestamps', '1',
+        '-fflags', '+genpts+discardcorrupt+nobuffer+igndts',
+        '-err_detect', 'ignore_err',
+        '-avoid_negative_ts', 'make_zero',
+        '-i', sdpPath,
+    ];
+}
+
+/** WebRTC (mediasoup PlainRTP → SDP file) → destination, re-encoded (VP8/Opus → H.264/AAC). */
+function webrtcArgs(sdpPath, destUrl, preset, { hasAudio = true, overrides = {} } = {}) {
+    return ['-hide_banner', '-loglevel', 'warning', ...rtpInputArgs(sdpPath), ...encodingArgs(preset, { hasAudio, overrides }), ...outputArgs(destUrl)];
+}
+
 function resolvePreset(destination) {
     const key = destination && destination.quality_preset || 'auto';
     if (key !== 'auto' && QUALITY_PRESETS[key]) return QUALITY_PRESETS[key];
@@ -164,5 +190,5 @@ function redactUrl(value) {
 
 module.exports = {
     QUALITY_PRESETS, PLATFORM_DEFAULT_PRESET, ENCODER_PRESETS, SRT_DEFAULT_LATENCY_MS,
-    isSrtUrl, buildDestUrl, buildSrtUrl, outputArgs, rtmpCopyArgs, jsmpegArgs, withProgress, resolvePreset, customOverrides, encodingArgs, friendlyError, redactUrl, redactText,
+    isSrtUrl, buildDestUrl, buildSrtUrl, outputArgs, rtmpCopyArgs, jsmpegArgs, webrtcArgs, rtpInputArgs, withProgress, resolvePreset, customOverrides, encodingArgs, friendlyError, redactUrl, redactText,
 };

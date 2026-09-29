@@ -115,7 +115,7 @@ t('apply: slots with a subject are imported with new keys; the rest are held or 
     assert.match(md, /## @japaneseoldguy/);
     assert.match(md, /ingest-authority/);
     assert.match(md, /OAuth-linked/);
-    assert.match(md, /webrtc worker is not ported/, 'the WebRTC slot is flagged');
+    assert.match(md, /switch it after the WebRTC worker is live/, 'the WebRTC slot is flagged');
     for (const secret of ['a3f9c2leakedkey', 'live_twitchsecret_1', 'yt-secret-2222', 'personalkey111', 'kick-secret-44']) assert.ok(!md.includes(secret), `no ${secret} in the checklist`);
 });
 

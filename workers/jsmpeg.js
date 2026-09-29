@@ -29,6 +29,8 @@ const http = require('http');
 const crypto = require('crypto');
 const path = require('path');
 const { createWorkerRuntime } = require('./runtime');
+const { createThumbnailer } = require('./thumbnails');
+const { createMediaClient } = require('../server/media-client');
 
 const SESSION_ID_RE = /^ses_[0-9A-HJKMNP-TV-Z]{26}$/;
 const INGEST_PATH_RE = /^\/([^/]+)\/(\d{1,5})\/(\d{1,5})\/?$/;
@@ -69,9 +71,10 @@ function listenInRange(server, min, max, skip = new Set()) {
     });
 }
 
-function createJsmpeg({ rt, log = console, exit = (code) => process.exit(code) }) {
+function createJsmpeg({ rt, log = console, exit = (code) => process.exit(code), fetchImpl, spawnImpl }) {
     const { store, config } = rt;
     const j = config.jsmpeg;
+    const thumbnails = createThumbnailer({ config, log, media: createMediaClient({ config, ...(fetchImpl ? { fetchImpl } : {}) }), ...(spawnImpl ? { spawnImpl } : {}) });
     /** session id → { sessionId, definitionId, width, height, req, ended, live, endReason, viewers:Set, taps:Set } */
     const channels = new Map();
     // Ends in flight. The heartbeat calls exitWhenIdle() every beat; without this an ended session
@@ -136,7 +139,7 @@ function createJsmpeg({ rt, log = console, exit = (code) => process.exit(code) }
                 req.destroy();
                 return;
             }
-            ch = { sessionId: adm.sessionId, definitionId: adm.definitionId, req, width, height, live: false, ended: false, endReason: null, viewers: new Set(), taps: new Set() };
+            ch = { sessionId: adm.sessionId, definitionId: adm.definitionId, req, width, height, live: false, ended: false, endReason: null, viewers: new Set(), taps: new Set(), thumbTimer: null };
             channels.set(ch.sessionId, ch);
             log.log(`[jsmpeg] session ${ch.sessionId} accepted for ${ch.definitionId} (key …${adm.hint}) at ${width}x${height}`);
             res.writeHead(200, { 'content-type': 'video/mp2t' });
@@ -165,7 +168,22 @@ function createJsmpeg({ rt, log = console, exit = (code) => process.exit(code) }
             log.warn(`[jsmpeg] session ${ch.sessionId} could not go live (${t.code}); closing`);
             ch.endReason = 'coordinator_failed';
             try { if (ch.req && !ch.req.destroyed) ch.req.destroy(); } catch { /* gone */ }
+            return;
         }
+        startThumbnails(ch);
+    }
+
+    /** Live thumbnails from this worker's loopback MPEG-TS tap (decision 4). Best effort. */
+    function startThumbnails(ch) {
+        if (!thumbnails.enabled || ch.thumbTimer || !tapServer) return;
+        const tapUrl = `http://127.0.0.1:${tapServer.address().port}/tap/${ch.sessionId}.ts`;
+        const grab = async () => {
+            try { const buf = await thumbnails.capture(['-f', 'mpegts', '-i', tapUrl]); if (buf) await thumbnails.publish(store, ch.sessionId, buf, { protocol: 'jsmpeg', width: ch.width, height: ch.height }); }
+            catch (err) { log.warn(`[jsmpeg] thumbnail ${ch.sessionId}: ${err.message}`); }
+        };
+        ch.thumbTimer = setInterval(() => grab().catch(() => {}), config.webrtc.thumbnails.intervalMs);
+        ch.thumbTimer.unref?.();
+        grab().catch(() => {});
     }
 
     function feed(ch, chunk) {
@@ -182,6 +200,7 @@ function createJsmpeg({ rt, log = console, exit = (code) => process.exit(code) }
         if (ch.ended) return;
         ch.ended = true;
         channels.delete(ch.sessionId);
+        if (ch.thumbTimer) { clearInterval(ch.thumbTimer); ch.thumbTimer = null; }
         pendingEnds++;
         try {
             for (const v of ch.viewers) { try { v.socket.end(wsFrame(OP_CLOSE, Buffer.alloc(0))); } catch { /* gone */ } }

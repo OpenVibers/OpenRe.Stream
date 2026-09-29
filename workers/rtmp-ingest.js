@@ -30,6 +30,8 @@ const NodeFlvSession = require('node-media-server/src/node_flv_session');
 const context = require('node-media-server/src/node_core_ctx');
 const NmsLogger = require('node-media-server/src/node_core_logger');
 const { createWorkerRuntime } = require('./runtime');
+const { createThumbnailer } = require('./thumbnails');
+const { createMediaClient } = require('../server/media-client');
 
 const SESSION_PATH_RE = /^\/live\/(ses_[0-9A-HJKMNP-TV-Z]{26})$/;
 
@@ -63,8 +65,9 @@ function admissionChain(admission, onAdmitted, onFailed, log) {
     return admission.then(onAdmitted, onFailed).catch((err) => log.error(`[rtmp] admission failed: ${err.stack || err}`));
 }
 
-function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(code) }) {
+function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(code), fetchImpl, spawnImpl }) {
     const { store, config } = rt;
+    const thumbnails = createThumbnailer({ config, log, media: createMediaClient({ config, ...(fetchImpl ? { fetchImpl } : {}) }), ...(spawnImpl ? { spawnImpl } : {}) });
     NmsLogger.setLogType(1); // errors only: the library's info lines would print stream paths
     const nmsConfig = {
         logType: 1,
@@ -165,7 +168,7 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
         // Rename before node-media-server registers the publisher (it reads publishStreamPath
         // right after this synchronous event): from here on the stream is /live/<session id>.
         s.publishStreamPath = `/live/${adm.sessionId}`;
-        publishers.set(id, { sessionId: adm.sessionId, definitionId: adm.definitionId, endReason: null });
+        publishers.set(id, { sessionId: adm.sessionId, definitionId: adm.definitionId, endReason: null, thumbTimer: null });
         log.log(`[rtmp] session ${adm.sessionId} accepted for ${adm.definitionId} (key …${adm.hint})`);
     });
 
@@ -177,12 +180,15 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
             // The coordinator failed it meanwhile (lease) — the transport must not outlive its record.
             log.warn(`[rtmp] session ${p.sessionId} could not go live (${t.code}); closing`);
             await stopNms(id);
+            return;
         }
+        startThumbnails(p);
     });
 
     on('donePublish', async (id) => {
         const p = publishers.get(id);
         if (!p) return;
+        if (p.thumbTimer) { clearInterval(p.thumbTimer); p.thumbTimer = null; }
         publishers.delete(id);
         await store.sessions.finish(p.sessionId, { reason: p.endReason || 'publisher_disconnected', actor: `worker:${runtime.me.id}` });
         log.log(`[rtmp] session ${p.sessionId} ended (${p.endReason || 'publisher_disconnected'})`);
@@ -211,6 +217,19 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
                 bitrate_kbps: s.bitrate || null,
             });
         }
+    }
+
+    /** Live thumbnails from the loopback HTTP-FLV this worker serves (decision 4). Best effort. */
+    function startThumbnails(p) {
+        if (!thumbnails.enabled || p.thumbTimer || !endpoints.flvPort) return;
+        const flvUrl = `http://127.0.0.1:${endpoints.flvPort}/live/${p.sessionId}.flv`;
+        const grab = async () => {
+            try { const buf = await thumbnails.capture(['-i', flvUrl]); if (buf) await thumbnails.publish(store, p.sessionId, buf, { protocol: 'rtmp' }); }
+            catch (err) { log.warn(`[rtmp] thumbnail ${p.sessionId}: ${err.message}`); }
+        };
+        p.thumbTimer = setInterval(() => grab().catch(() => {}), config.webrtc.thumbnails.intervalMs);
+        p.thumbTimer.unref?.();
+        grab().catch(() => {});
     }
 
     async function endSession(sessionId, reason) {

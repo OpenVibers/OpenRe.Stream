@@ -62,11 +62,22 @@ function createRestreamWorker({ rt, log = console, exit = (code) => process.exit
             // A draining generation starts nothing new: an output assigned to it but not started yet
             // goes back to the coordinator for the newest generation.
             if (runtime.draining) { await store.outputs.unassign(row.id); seen.delete(row.id); continue; }
-            const input = await inputUrlFor(session);
-            if (!input) { await store.outputs.report(row.id, { state: 'failed', last_error: `restream from ${session.protocol} sessions is not supported by OpenRe yet`, ended_at: Date.now() }, { workerId: runtime.me.id }); continue; }
+            // The source URL for RTMP (loopback FLV) and JSMPEG (data tap); WebRTC has no pullable
+            // URL — the runner asks the owning worker for a PlainRTP egress instead (egressBase).
+            let input = null;
+            let egressBase = null;
+            if (session.protocol === 'webrtc') {
+                const owner = session.worker_id ? await store.workers.get(session.worker_id) : null;
+                const ep = (owner && owner.endpoints) || {};
+                if (!ep.egressPort) { await store.outputs.report(row.id, { state: 'failed', last_error: 'the WebRTC worker for this session exposes no egress endpoint', ended_at: Date.now() }, { workerId: runtime.me.id }); continue; }
+                egressBase = `http://127.0.0.1:${ep.egressPort}`;
+            } else {
+                input = await inputUrlFor(session);
+                if (!input) { await store.outputs.report(row.id, { state: 'failed', last_error: `restream from ${session.protocol} sessions is not supported by OpenRe yet`, ended_at: Date.now() }, { workerId: runtime.me.id }); continue; }
+            }
             // Let the ingest settle before pulling (Live waits 3 s for node-media-server's FLV).
             if (session.live_at && Date.now() - session.live_at < config.outputs.startDelayMs) continue;
-            runner = new OutputRunner({ outputId: row.id, destinationId: row.destination_id, inputUrl: input, source: session.protocol, store, config, log, spawnImpl, lookup, workerId: runtime.me.id });
+            runner = new OutputRunner({ outputId: row.id, destinationId: row.destination_id, inputUrl: input, source: session.protocol, sessionId: session.id, egressBase, store, config, log, spawnImpl, lookup, workerId: runtime.me.id });
             runners.set(row.id, runner);
             runner.start().catch((err) => runner.fail(err.message, { cooldown: false }));
         }

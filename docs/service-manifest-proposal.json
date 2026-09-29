@@ -25,6 +25,7 @@
   ],
   "eventsProduced": [
     "openre.session.started",
+    "openre.session.updated",
     "openre.session.ended",
     "openre.session.failed",
     "openre.output.healthy",

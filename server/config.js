@@ -23,6 +23,7 @@ function load(env = process.env) {
     const port = int(env.PORT, 4500);
     const rtmpPort = int(env.OPENRE_RTMP_PORT, 1936);
     const jsmpegPort = int(env.OPENRE_JSMPEG_PORT, 9736);
+    const webrtcPort = int(env.OPENRE_WEBRTC_PORT, 9936);
     return {
         service: 'openre',
         port,
@@ -107,6 +108,57 @@ function load(env = process.env) {
             internalPortMin: int(env.OPENRE_JSMPEG_INTERNAL_PORT_MIN, 19710),
             internalPortMax: int(env.OPENRE_JSMPEG_INTERNAL_PORT_MAX, 19749),
             maxPublishersPerWorker: int(env.OPENRE_JSMPEG_MAX_PUBLISHERS, 64),
+        },
+
+        // ── Ingest (WebRTC: WHIP + the mediasoup SFU + viewer signaling) ──
+        // One worker kind 'webrtc' owns WHIP ingest, the mediasoup producers/consumers and viewer
+        // signaling (T4 decision 1: mediasoup is single-process, so ingest and consumption cannot be
+        // split). Live's own SFU keeps UDP 10000–10100 until the WebRTC cutover; OpenRe listens on
+        // 10200–10300 (decision 3) so both stacks run side by side.
+        webrtc: {
+            // Public HTTP port: WHIP (POST/PATCH/DELETE /whip/…) and the WS signaling endpoints
+            // (broadcaster and viewer). Live's WHIP lives on its app port 3000; OpenRe brings its own.
+            // SO_REUSEPORT so two generations can listen during a drain.
+            port: webrtcPort,
+            bindHost: env.OPENRE_WEBRTC_BIND || '0.0.0.0',
+            publicHost: env.OPENRE_WEBRTC_PUBLIC_HOST || (isProduction ? 'ingest.openre.stream' : '127.0.0.1'),
+            publicPort: int(env.OPENRE_WEBRTC_PUBLIC_PORT, webrtcPort),
+            // Loopback HTTP API a generation serves RTP descriptors from: the restream worker, Media's
+            // recorder and the thumbnail grabber ask it for a PlainRTP feed of a session's producers.
+            // First free port from this range; published in the worker row.
+            internalPortMin: int(env.OPENRE_WEBRTC_INTERNAL_PORT_MIN, 19810),
+            internalPortMax: int(env.OPENRE_WEBRTC_INTERNAL_PORT_MAX, 19849),
+            maxPublishersPerWorker: int(env.OPENRE_WEBRTC_MAX_PUBLISHERS, 64),
+            // STUN/TURN servers handed to browser broadcasters and viewers (Live's SFU uses Google's
+            // public STUN; TURN_URL on Live is a later addition). Comma-separated list of URLs.
+            stunUrls: list(env.OPENRE_WEBRTC_STUN, ['stun:stun.l.google.com:19302']),
+            // mediasoup: one Worker per process (more only if OPENRE_MEDIASOUP_WORKERS says so), one
+            // Router per session. announcedIp (MEDIASOUP_ANNOUNCED_IP) is required in production: the
+            // public address candidates are advertised with, without which remote WebRTC clients cannot
+            // reach the worker. Never Live's 10000–10100 range.
+            media: {
+                listenIp: env.MEDIASOUP_LISTEN_IP || env.OPENRE_MEDIASOUP_LISTEN_IP || '0.0.0.0',
+                announcedIp: env.MEDIASOUP_ANNOUNCED_IP || env.OPENRE_MEDIASOUP_ANNOUNCED_IP || '',
+                minPort: int(env.OPENRE_MEDIASOUP_MIN_PORT, 10200),
+                maxPort: int(env.OPENRE_MEDIASOUP_MAX_PORT, 10300),
+                workers: Math.max(1, int(env.OPENRE_MEDIASOUP_WORKERS, 1)),
+                // Same codec set Live's SFU offers (server/streaming/webrtc-sfu.js + config.js).
+                mediaCodecs: [
+                    { kind: 'audio', mimeType: 'audio/opus', clockRate: 48000, channels: 2 },
+                    { kind: 'video', mimeType: 'video/VP8', clockRate: 90000, parameters: { 'x-google-start-bitrate': 2500 } },
+                    { kind: 'video', mimeType: 'video/H264', clockRate: 90000, parameters: { 'packetization-mode': 1, 'profile-level-id': '42e01f', 'level-asymmetry-allowed': 1 } },
+                ],
+            },
+            // Live thumbnails come from the source the worker owns (decision 4): a frame grabbed every
+            // interval from a short-lived consumer, uploaded to Media and carried on the session state
+            // and its events as thumbnail_url.
+            thumbnails: {
+                enabled: env.OPENRE_THUMBNAILS !== 'off',
+                intervalMs: int(env.OPENRE_THUMBNAIL_INTERVAL_MS, 30000),
+                width: int(env.OPENRE_THUMBNAIL_WIDTH, 640),
+                // Namespace the object is uploaded under in Media (grant media.object.upload ns live).
+                namespace: env.OPENRE_THUMBNAIL_NS || 'live',
+            },
         },
 
         // ── Workers, leases, generations ────────────────────────
