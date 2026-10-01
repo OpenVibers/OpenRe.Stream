@@ -136,7 +136,14 @@ function createSignaling({ sfu, iceServers, admit, endSession, log = console }) 
             wss.handleUpgrade(req, socket, head, (ws) => {
                 const peerId = adm.peerId || `bc-${adm.sessionId}`;
                 clients.set(ws, { role: 'broadcaster', sessionId: adm.sessionId, peerId });
-                ws.on('close', () => { clients.delete(ws); sfu.closePeer(adm.sessionId, peerId); endSession?.(adm.sessionId, 'broadcaster_disconnected'); });
+                // endSession is async: the ws 'close' handler never awaits it, so a rejection would be
+                // unhandled and Node would end the worker, dropping every other session it carries.
+                ws.on('close', () => {
+                    clients.delete(ws);
+                    sfu.closePeer(adm.sessionId, peerId);
+                    const ending = endSession ? endSession(adm.sessionId, 'broadcaster_disconnected') : null;
+                    if (ending) Promise.resolve(ending).catch((err) => log.error(`[webrtc] broadcaster close could not end ${adm.sessionId}: ${err && (err.stack || err.message) || err}`));
+                });
                 ws.on('error', () => {});
                 safeSend(ws, { type: 'welcome', peerId, role: 'broadcaster', sessionId: adm.sessionId, iceServers: ice() }, log);
                 handleBroadcaster(ws, adm);

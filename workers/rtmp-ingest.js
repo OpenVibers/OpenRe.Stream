@@ -75,6 +75,10 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
     };
     /** node-media-server session id → { sessionId, definitionId, endReason } */
     const publishers = new Map();
+    // Ends in flight. The heartbeat calls exitWhenIdle() every beat; without this a publisher that
+    // left but whose `finish` write has not committed yet would let the drained process exit before
+    // it lands, leaving the session live until the coordinator fails it lease_expired.
+    let pendingEnds = 0;
     let publicServers = [];
     const publicPorts = new Set([config.rtmp.port, ...config.rtmp.extraPorts]);
     let playServer = null;
@@ -90,7 +94,7 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
             onEndRequested: async (s) => await endSession(s.id, 'end_requested'),
             onLost: async () => { for (const [nmsId] of publishers) await stopNms(nmsId); return closeAll(); },
             onHeartbeat: async () => await refreshMediaInfo(),
-            activeCount: () => publishers.size,
+            activeCount: () => publishers.size + pendingEnds,
             onExit: () => closeAll(),
         },
     });
@@ -190,7 +194,12 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
         if (!p) return;
         if (p.thumbTimer) { clearInterval(p.thumbTimer); p.thumbTimer = null; }
         publishers.delete(id);
-        await store.sessions.finish(p.sessionId, { reason: p.endReason || 'publisher_disconnected', actor: `worker:${runtime.me.id}` });
+        pendingEnds++;
+        try {
+            await store.sessions.finish(p.sessionId, { reason: p.endReason || 'publisher_disconnected', actor: `worker:${runtime.me.id}` });
+        } finally {
+            pendingEnds--;
+        }
         log.log(`[rtmp] session ${p.sessionId} ended (${p.endReason || 'publisher_disconnected'})`);
         if (runtime.draining) runtime.exitWhenIdle();
     });
@@ -236,8 +245,11 @@ function createRtmpIngest({ rt, log = console, exit = (code) => process.exit(cod
         for (const [id, p] of publishers) {
             if (p.sessionId === sessionId) { p.endReason = reason; await stopNms(id); return true; }
         }
-        // Not ours any more (publisher already gone): make sure the record is closed.
-        await store.sessions.finish(sessionId, { reason, actor: `worker:${runtime.me.id}` });
+        // Not ours any more (publisher already gone): make sure the record is closed. Counted so a
+        // drained generation does not exit before the write lands.
+        pendingEnds++;
+        try { await store.sessions.finish(sessionId, { reason, actor: `worker:${runtime.me.id}` }); } finally { pendingEnds--; }
+        if (runtime.draining) runtime.exitWhenIdle();
         return false;
     }
 
