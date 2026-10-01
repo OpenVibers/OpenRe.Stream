@@ -57,9 +57,16 @@ function createKeyStore({ urls = [], pem = null, fetchImpl = globalThis.fetch, l
     async function start() {
         if (pem) return Promise.resolve(key);
         const attempt = async () => {
-            const k = await fetchOnce();
-            if (!k && !key) { retryTimer = setTimeout(attempt, 30000); retryTimer.unref?.(); }
-            return k;
+            try {
+                const k = await fetchOnce();
+                if (!k && !key) { retryTimer = setTimeout(() => { attempt().catch(() => {}); }, 30000); retryTimer.unref?.(); }
+                return k;
+            } catch (err) {
+                // The retry timer never awaits the attempt it starts: an unhandled rejection would
+                // end the API process (Node 22) over one failed Network key fetch.
+                log.warn(`[auth] key retry failed: ${err.message}`);
+                return null;
+            }
         };
         refreshTimer = setInterval(() => { fetchOnce().catch(() => {}); }, 6 * 60 * 60 * 1000);
         refreshTimer.unref?.();
