@@ -16,6 +16,7 @@ const dgram = require('dgram');
 const http = require('http');
 const WebSocket = require('ws');
 const { createWebrtc } = require('../workers/webrtc');
+const sdpTool = require('../workers/webrtc/sdp');
 const { runtime, freePort, waitFor, sleep, suite, silent, OWNER } = require('./helpers');
 
 let werift;
@@ -168,7 +169,7 @@ t('a WHIP offer is answered, goes live on ICE, and a PlainRTP egress receives it
     udp.handle = desc.handle;
     await waitFor(() => udp.packets > 0, { what: 'RTP on the PlainRTP egress', timeoutMs: 20000 });
 
-    const patch = await httpReq(port, 'PATCH', `/whip/session/${pub.resourceId}`, { headers: { 'content-type': 'application/trickle-ice-sdpfrag' }, body: 'a=ice-ufrag:x\r\na=candidate:1 1 udp 1 127.0.0.1 9999 typ host\r\n' });
+    const patch = await httpReq(port, 'PATCH', `/whip/session/${pub.resourceId}`, { headers: { 'content-type': 'application/trickle-ice-sdpfrag', 'if-match': pub.etag }, body: 'a=ice-ufrag:x\r\na=candidate:1 1 udp 1 127.0.0.1 9999 typ host\r\n' });
     assert.strictEqual(patch.status, 204, 'a candidate of an unknown ICE generation is silently discarded');
 });
 
@@ -181,10 +182,21 @@ t('WHIP resource: PATCH/DELETE preconditions and auth, and an ICE restart that k
     assert.strictEqual((await httpReq(port, 'DELETE', unknown)).status, 404, 'DELETE of an unknown resource is 404');
     assert.strictEqual((await httpReq(port, 'GET', at)).status, 405);
     assert.strictEqual((await httpReq(port, 'PATCH', at, { headers: { 'content-type': 'application/sdp' }, body: 'a=end-of-candidates\r\n' })).status, 415);
+    // RFC 9725 §4.3.1: a PATCH names the ICE session it conditions on, so a missing If-Match is 428
+    // — for a trickle fragment and for an ICE restart alike, before either touches the transport.
+    const noPrecondition = await patch({}, 'a=end-of-candidates\r\n');
+    assert.strictEqual(noPrecondition.status, 428, `PATCH without If-Match (${noPrecondition.status}): ${noPrecondition.body}`);
+    assert.strictEqual(JSON.parse(noPrecondition.body).error_code, 'precondition_required');
+    const noPreconditionRestart = await patch({}, 'a=ice-ufrag:zzzz\r\na=ice-pwd:zzzzzzzzzzzzzzzzzzzzzzzz\r\na=end-of-candidates\r\n');
+    assert.strictEqual(noPreconditionRestart.status, 428, 'an ICE restart without If-Match is 428');
     assert.strictEqual((await patch({ 'if-match': '"stale"' }, 'a=end-of-candidates\r\n')).status, 412);
-    assert.strictEqual((await patch({}, 'not an sdp fragment')).status, 400);
-    assert.strictEqual((await patch({ authorization: 'Bearer ork_wrong' }, 'a=end-of-candidates\r\n')).status, 401, 'a Bearer that is not the key is refused');
-    assert.strictEqual((await httpReq(port, 'DELETE', at, { headers: { authorization: 'Bearer ork_wrong' } })).status, 401);
+    assert.strictEqual((await patch({ 'if-match': pub.etag }, 'not an sdp fragment')).status, 400);
+    const wrongBearer = await patch({ 'if-match': pub.etag, authorization: 'Bearer ork_wrong' }, 'a=end-of-candidates\r\n');
+    assert.strictEqual(wrongBearer.status, 401, 'a Bearer that is not the key is refused');
+    assert.strictEqual(wrongBearer.headers['www-authenticate'], 'Bearer', 'a 401 names the Bearer scheme (RFC 9725 §4.5)');
+    const deleteUnauthorized = await httpReq(port, 'DELETE', at, { headers: { authorization: 'Bearer ork_wrong' } });
+    assert.strictEqual(deleteUnauthorized.status, 401);
+    assert.strictEqual(deleteUnauthorized.headers['www-authenticate'], 'Bearer', 'DELETE 401 too');
 
     // ICE restart (RFC 9725 §4.3.2): new client credentials → new server credentials and a new ETag.
     const before = udp.packets;
@@ -193,13 +205,26 @@ t('WHIP resource: PATCH/DELETE preconditions and auth, and an ICE restart that k
     await pub.pc.setLocalDescription(offer);
     const ufrag = /a=ice-ufrag:(\S+)/.exec(pub.pc.localDescription.sdp)[1];
     const pwd = /a=ice-pwd:(\S+)/.exec(pub.pc.localDescription.sdp)[1];
-    const restart = await patch({ 'if-match': '*', authorization: `Bearer ${keyA}` }, `a=ice-ufrag:${ufrag}\r\na=ice-pwd:${pwd}\r\n`);
+    // The fragment carries every attribute the answer must mirror (§4.3.3). A browser only sends
+    // ice-options:trickle; ice-lite is here to prove the server echoes what it got, not a constant.
+    const restartBody = `a=ice-ufrag:${ufrag}\r\na=ice-pwd:${pwd}\r\na=ice-options:trickle\r\na=ice-pacing:50\r\na=ice-lite\r\na=end-of-candidates\r\n`;
+    const restart = await patch({ 'if-match': '*', authorization: `Bearer ${keyA}` }, restartBody);
     assert.strictEqual(restart.status, 200, `ICE restart (${restart.status}): ${restart.body}`);
     assert.match(restart.headers['content-type'], /^application\/trickle-ice-sdpfrag/);
     assert.notStrictEqual(restart.headers.etag, pub.etag, 'a restart starts a new ICE session');
-    const serverUfrag = /a=ice-ufrag:(\S+)/.exec(restart.body)[1];
-    const serverPwd = /a=ice-pwd:(\S+)/.exec(restart.body)[1];
-    assert.notStrictEqual(serverUfrag, /a=ice-ufrag:(\S+)/.exec(pub.answer)[1], 'the server has new credentials');
+    const request = sdpTool.parseIceFragment(restartBody);
+    const server = sdpTool.parseIceFragment(restart.body);
+    assert.ok(server.ufrag, 'the answer carries the server ufrag');
+    assert.ok(server.pwd, 'the answer carries the server pwd');
+    assert.notStrictEqual(server.ufrag, /a=ice-ufrag:(\S+)/.exec(pub.answer)[1], 'the server has new credentials');
+    assert.deepStrictEqual(
+        { iceOptions: server.iceOptions, icePacing: server.icePacing, iceLite: server.iceLite, endOfCandidates: server.endOfCandidates },
+        { iceOptions: request.iceOptions, icePacing: request.icePacing, iceLite: request.iceLite, endOfCandidates: request.endOfCandidates },
+        'the answer mirrors the request fragment\'s ICE attributes exactly',
+    );
+    assert.strictEqual(server.candidates, 0, 'a restart answer carries no candidates');
+    const serverUfrag = server.ufrag;
+    const serverPwd = server.pwd;
     assert.strictEqual((await patch({ 'if-match': pub.etag }, 'a=end-of-candidates\r\n')).status, 412, 'the old ICE session\'s ETag no longer matches');
     assert.strictEqual((await patch({ 'if-match': restart.headers.etag }, 'a=end-of-candidates\r\n')).status, 204);
     pub.etag = restart.headers.etag;
