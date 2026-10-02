@@ -11,8 +11,7 @@ const { createUiRouter } = require('./ui/routes');
 const pkg = require('../package.json');
 
 const SESSION_FLV_RE = /^(ses_[0-9A-HJKMNP-TV-Z]{26})\.flv$/;
-// The worker kinds a switched slot needs (scripts/cutover-preflight.js checks the same two).
-const WORKER_KINDS = Object.freeze(['rtmp-ingest', 'restream']);
+const PROTOCOL_WORKERS = Object.freeze({ rtmp: 'rtmp-ingest', jsmpeg: 'jsmpeg', webrtc: 'webrtc' });
 
 function createApp({ rt, auth, keys, log = console, fetchImpl }) {
     const { config, store, events, db } = rt;
@@ -66,6 +65,17 @@ function createApp({ rt, auth, keys, log = console, fetchImpl }) {
     // scripts/cutover-preflight.js; a restore drill never publishes, so its relay check is skipped, never ok.
     const { createReadiness, skip } = require('openvibe-shared/ready');
     const workerView = async () => (await store.workers.alive()).map(w => ({ kind: w.kind, generation: w.generation, state: w.state, heartbeat_age_ms: Date.now() - w.heartbeat_at }));
+    const requiredWorkerKinds = async () => {
+        const rows = await db.prepare("SELECT protocols FROM stream_definitions WHERE state != 'archived'").all();
+        const kinds = new Set();
+        // Before a stream is created, retain the RTMP readiness baseline.
+        if (!rows.length) kinds.add('rtmp-ingest');
+        for (const row of rows) {
+            for (const protocol of JSON.parse(row.protocols)) kinds.add(PROTOCOL_WORKERS[protocol]);
+        }
+        kinds.add('restream');
+        return [...kinds];
+    };
     const leaseView = async () => {
         const l = await db.prepare("SELECT holder, expires_at FROM leases WHERE name = 'coordinator'").get();
         return l ? { holder: l.holder, lease_valid: l.expires_at > Date.now() } : null;
@@ -80,10 +90,10 @@ function createApp({ rt, auth, keys, log = console, fetchImpl }) {
             { name: 'db', required: true, description: 'PostgreSQL answers a query', check: async () => (await db.prepare('SELECT 1 AS ok').get()).ok === 1 },
             { name: 'network_key', required: true, description: 'OpenVibe.Network RS256 key (sign-in and service tokens)', check: () => keys.loaded() || 'Network public key not loaded yet' },
             {
-                name: 'workers', required: false, description: 'a ready rtmp-ingest and restream worker',
+                name: 'workers', required: false, description: 'ready workers for stored stream protocols and restream',
                 check: async () => {
                     const alive = await workerView();
-                    const missing = WORKER_KINDS.filter(k => !alive.some(w => w.kind === k && w.state === 'ready'));
+                    const missing = (await requiredWorkerKinds()).filter(k => !alive.some(w => w.kind === k && w.state === 'ready'));
                     return missing.length ? `no ready ${missing.join(' or ')} worker` : { ok: true, detail: { ready: alive.filter(w => w.state === 'ready').map(w => `${w.kind}#${w.generation}`) } };
                 },
             },
