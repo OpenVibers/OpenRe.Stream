@@ -261,15 +261,37 @@ function buildSdpAnswer(transport, offerSdp, producersByKind, { serverName = 'Op
     return write(sdpObj);
 }
 
-/** How many ICE candidates a trickle-PATCH body carries (used only for logging). */
-function countCandidates(sdpText) {
-    if (typeof sdpText !== 'string' || !sdpText.trim()) return 0;
-    try {
-        const parsed = parse(sdpText);
-        return Array.isArray(parsed.media) ? parsed.media.reduce((sum, m) => sum + (Array.isArray(m.candidates) ? m.candidates.length : 0), 0) : 0;
-    } catch {
-        return 0;
+const FRAG_LINE_RE = /^[a-z]=\S/;
+const CANDIDATE_RE = /^candidate:\S+ \d+ \S+ \d+ \S+ \d+ typ \S+/i;
+
+/**
+ * Read a WHIP PATCH body, an RFC 8840 "application/trickle-ice-sdpfrag": the ICE credentials it
+ * names (session or media level, the first wins) and how many candidates it carries. Throws
+ * (code 'invalid_sdpfrag') on anything that is not an SDP fragment or on a malformed candidate.
+ */
+function parseIceFragment(text) {
+    if (typeof text !== 'string') throw Object.assign(new Error('missing sdpfrag'), { code: 'invalid_sdpfrag' });
+    const out = { ufrag: null, pwd: null, candidates: 0, endOfCandidates: false };
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line) continue;
+        if (!FRAG_LINE_RE.test(line)) throw Object.assign(new Error(`not an SDP line: ${line.slice(0, 40)}`), { code: 'invalid_sdpfrag' });
+        if (!line.startsWith('a=')) continue;
+        const attr = line.slice(2);
+        if (attr.startsWith('ice-ufrag:')) out.ufrag = out.ufrag || attr.slice(10).trim();
+        else if (attr.startsWith('ice-pwd:')) out.pwd = out.pwd || attr.slice(8).trim();
+        else if (attr === 'end-of-candidates') out.endOfCandidates = true;
+        else if (attr.startsWith('candidate:')) {
+            if (!CANDIDATE_RE.test(attr)) throw Object.assign(new Error('malformed candidate'), { code: 'invalid_sdpfrag' });
+            out.candidates++;
+        }
     }
+    return out;
+}
+
+/** The sdpfrag a WHIP resource answers an ICE restart with: the media server's new credentials. */
+function buildIceFragment(iceParameters) {
+    return ['a=ice-lite', `a=ice-ufrag:${iceParameters.usernameFragment}`, `a=ice-pwd:${iceParameters.password}`, ''].join('\r\n');
 }
 
 /**
@@ -297,5 +319,5 @@ function buildEgressSdp({ video, audio } = {}) {
 
 module.exports = {
     available, parse, write,
-    getDtlsSetupAttribute, selectDtlsFingerprint, extractDtlsParameters, extractRtpParameters, buildSdpAnswer, countCandidates, buildEgressSdp,
+    getDtlsSetupAttribute, selectDtlsFingerprint, extractDtlsParameters, extractRtpParameters, buildSdpAnswer, parseIceFragment, buildIceFragment, buildEgressSdp,
 };

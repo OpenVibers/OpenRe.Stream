@@ -66,6 +66,23 @@ t('WHIP SDP: parse, DTLS role, RTP parameters and the answer', () => {
     assert.match(answer, /a=rtpmap:96 VP8\/90000/);
 });
 
+t('WHIP PATCH sdpfrag: credentials, candidates, end-of-candidates; malformed bodies throw', () => {
+    const trickle = sdp.parseIceFragment('a=ice-ufrag:EsAw\r\na=ice-pwd:P2uYro0UCOQ4zxjKXaWCBui1\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=mid:0\r\n'
+        + 'a=candidate:1387637174 1 udp 2122260223 192.0.2.1 61764 typ host generation 0 ufrag EsAw network-id 1\r\n'
+        + 'a=candidate:3471623853 1 udp 2122194687 198.51.100.2 61765 typ host\r\na=end-of-candidates\r\n');
+    assert.deepStrictEqual(trickle, { ufrag: 'EsAw', pwd: 'P2uYro0UCOQ4zxjKXaWCBui1', candidates: 2, endOfCandidates: true });
+    // Media-level credentials count too; a bare candidate list has none.
+    assert.strictEqual(sdp.parseIceFragment('m=video 9 UDP/TLS/RTP/SAVPF 96\na=ice-ufrag:abc\n').ufrag, 'abc');
+    assert.deepStrictEqual(sdp.parseIceFragment('a=candidate:1 1 tcp 5 192.0.2.1 9 typ host tcptype active\n'), { ufrag: null, pwd: null, candidates: 1, endOfCandidates: false });
+    assert.strictEqual(sdp.parseIceFragment('').candidates, 0);
+    for (const bad of ['hello', '{"candidate":"x"}', 'a=candidate:garbage', undefined]) {
+        assert.throws(() => sdp.parseIceFragment(bad), (err) => err.code === 'invalid_sdpfrag', `rejects ${bad}`);
+    }
+    const frag = sdp.buildIceFragment({ usernameFragment: 'u1', password: 'p1' });
+    assert.deepStrictEqual(sdp.parseIceFragment(frag), { ufrag: 'u1', pwd: 'p1', candidates: 0, endOfCandidates: false });
+    assert.match(frag, /^a=ice-lite\r\n/, 'the restart answer says the server is ICE-lite');
+});
+
 t('a webrtc session playback descriptor is { signaling_url, announced_ip } and carries thumbnail_url', async () => {
     const rt = await runtime({ dir: tmpDir(), env: { MEDIASOUP_ANNOUNCED_IP: '203.0.113.7' } });
     const { definition, key } = await rt.store.definitions.create({ owner_subject: OWNER, protocols: ['webrtc'] });

@@ -8,7 +8,8 @@
  *   public   0.0.0.0:OPENRE_WEBRTC_PORT (9936 until the WebRTC cutover; Live's WHIP/SFU live on its
  *            app port 3000), SO_REUSEPORT so two generations listen during a drain:
  *              POST/OPTIONS   /whip/<key>          WHIP ingest (RFC 9725): offer → answer
- *              PATCH/DELETE   /whip/session/<id>   trickle ICE / end
+ *              PATCH/DELETE   /whip/session/<id>   trickle ICE or ICE restart / end (ETag/If-Match,
+ *                                                  the POST's Bearer, if any, is required again)
  *              WS upgrade     /b/<key>             browser broadcaster signaling (mediasoup-client)
  *              WS upgrade     /w/<session id>      viewer signaling, by playback id (never the key)
  *   internal 127.0.0.1:<egressPort>  the RTP egress API the restream worker, Media's RTP recorder and
@@ -181,14 +182,22 @@ function createWebrtc({ rt, log = console, exit = (code) => process.exit(code), 
     }
 
     // ── WHIP ────────────────────────────────────────────────────
-    function whipHeaders(req, sessionId, resourceId) {
+    function whipHeaders(req, resourceId, etag) {
         const host = req.headers.host || `${w.publicHost}:${w.publicPort}`;
         return {
             ...WHIP_CORS,
             Location: `https://${host}/whip/session/${resourceId}`,
-            ETag: `"${resourceId}"`,
+            ETag: etag,
         };
     }
+
+    /** A new entity-tag per ICE session (RFC 9725 §4.3: it changes on every ICE restart). */
+    const newIceEtag = () => `"${crypto.randomBytes(8).toString('hex')}"`;
+    const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest();
+    const bearerOf = (req) => {
+        const auth = req.headers.authorization;
+        return auth && auth.startsWith('Bearer ') ? auth.slice(7).trim() : null;
+    };
 
     function sendWhipError(res, status, code, message) {
         res.writeHead(status, { ...WHIP_CORS, 'content-type': 'application/json', 'X-WHIP-ERROR': code });
@@ -196,8 +205,7 @@ function createWebrtc({ rt, log = console, exit = (code) => process.exit(code), 
     }
 
     async function handleWhipPost(req, res, key) {
-        const auth = req.headers.authorization;
-        const bearer = auth && auth.startsWith('Bearer ') ? auth.slice(7).trim() : null;
+        const bearer = bearerOf(req);
         if (bearer && bearer !== key) return sendWhipError(res, 401, 'bearer_mismatch', 'Bearer token does not match stream key');
         let offerText;
         try { offerText = await readBody(req); } catch { return sendWhipError(res, 413, 'body_too_large', 'Offer too large'); }
@@ -264,7 +272,14 @@ function createWebrtc({ rt, log = console, exit = (code) => process.exit(code), 
             return sendWhipError(res, 500, 'answer_generation_failed', 'Failed to generate SDP answer');
         }
 
-        sess.whip.set(resourceId, { peerId, transportId: transportInfo.id, iceReady: false, iceGraceTimer: null, iceFailTimer: null });
+        const remoteUfrag = offerSdp.iceUfrag || ((offerSdp.media || []).find((m) => m.iceUfrag) || {}).iceUfrag || null;
+        sess.whip.set(resourceId, {
+            peerId, transportId: transportInfo.id, iceReady: false, iceGraceTimer: null, iceFailTimer: null,
+            // The resource's own state: the ICE session's entity-tag, the client's current ICE
+            // username fragment, and the key's hash — a client that authenticated with a Bearer
+            // must send it again on PATCH/DELETE; any Bearer sent must be the key.
+            etag: newIceEtag(), remoteUfrag, keyHash: sha256(key), bearerRequired: Boolean(bearer),
+        });
 
         // The session goes live when media flows: ICE connected (Live's whip-handler rule).
         transport.on('icestatechange', (state) => {
@@ -287,21 +302,69 @@ function createWebrtc({ rt, log = console, exit = (code) => process.exit(code), 
         });
 
         log.log(`[webrtc] WHIP session ${sess.sessionId} accepted for ${sess.definitionId} (key …${sess.hint}), ${Object.keys(producersByKind).length} producer(s)`);
-        res.writeHead(201, { 'content-type': 'application/sdp', ...whipHeaders(req, sess.sessionId, resourceId) });
+        res.writeHead(201, { 'content-type': 'application/sdp', ...whipHeaders(req, resourceId, sess.whip.get(resourceId).etag) });
         res.end(answer);
     }
 
-    function handleWhipPatch(req, res, resourceId) {
-        let found = null;
-        for (const sess of sessions.values()) if (sess.whip.has(resourceId)) { found = sess; break; }
+    function findWhip(resourceId) {
+        for (const sess of sessions.values()) {
+            const entry = sess.whip.get(resourceId);
+            if (entry) return { sess, entry };
+        }
+        return null;
+    }
+
+    /** RFC 9725 §4.5: the resource accepts the Bearer the endpoint did, and only that. */
+    function whipResourceAuthorized(req, entry) {
+        const bearer = bearerOf(req);
+        if (!bearer) return !entry.bearerRequired;
+        return crypto.timingSafeEqual(sha256(bearer), entry.keyHash);
+    }
+
+    /**
+     * Trickle ICE / ICE restart (RFC 9725 §4.3, RFC 8840 fragments). The transport is ICE-lite, so
+     * trickled candidates are acknowledged and discarded: the client's connectivity checks reach
+     * the transport's own candidates (sent in the answer) and mediasoup learns the client's address
+     * from them. New ICE credentials in the fragment are an ICE restart: the transport gets new
+     * credentials, answered 200 with them and a new ETag; the session stays up either way.
+     */
+    async function handleWhipPatch(req, res, resourceId) {
+        const found = findWhip(resourceId);
         if (!found) return sendWhipError(res, 404, 'session_not_found', 'Session not found');
-        readBody(req).then((body) => { sdpTool.countCandidates(body); res.writeHead(204, WHIP_CORS); res.end(); }).catch(() => { res.writeHead(204, WHIP_CORS); res.end(); });
+        const { sess, entry } = found;
+        if (!whipResourceAuthorized(req, entry)) return sendWhipError(res, 401, 'unauthorized', 'Bearer token required for this resource');
+        if (!/^application\/trickle-ice-sdpfrag\s*(;|$)/i.test(req.headers['content-type'] || '')) {
+            return sendWhipError(res, 415, 'unsupported_media_type', 'PATCH body must be application/trickle-ice-sdpfrag');
+        }
+        const ifMatch = (req.headers['if-match'] || '').trim();
+        if (ifMatch && ifMatch !== '*' && ifMatch !== entry.etag) return sendWhipError(res, 412, 'etag_mismatch', 'If-Match does not name the current ICE session');
+        let body;
+        try { body = await readBody(req); } catch { return sendWhipError(res, 413, 'body_too_large', 'Fragment too large'); }
+        let frag;
+        try { frag = sdpTool.parseIceFragment(body); } catch { return sendWhipError(res, 400, 'invalid_sdpfrag', 'Invalid trickle-ice-sdpfrag'); }
+
+        if (frag.ufrag && frag.pwd && frag.ufrag !== entry.remoteUfrag) {
+            let iceParameters;
+            try { iceParameters = await sfu.restartIce(sess.sessionId, entry.peerId, entry.transportId); } catch (err) {
+                log.warn(`[webrtc] WHIP ICE restart failed for ${sess.sessionId}: ${err.message}`);
+                return sendWhipError(res, 500, 'ice_restart_failed', 'ICE restart failed');
+            }
+            if (!sess.whip.has(resourceId)) return sendWhipError(res, 404, 'session_not_found', 'Session not found');
+            entry.remoteUfrag = frag.ufrag;
+            entry.etag = newIceEtag();
+            log.log(`[webrtc] WHIP ICE restart for ${sess.sessionId}`);
+            res.writeHead(200, { ...WHIP_CORS, 'content-type': 'application/trickle-ice-sdpfrag', ETag: entry.etag });
+            return res.end(sdpTool.buildIceFragment(iceParameters));
+        }
+        res.writeHead(204, WHIP_CORS);
+        res.end();
     }
 
     async function handleWhipDelete(req, res, resourceId) {
-        let found = null;
-        for (const sess of sessions.values()) if (sess.whip.has(resourceId)) { found = sess; break; }
-        if (found) await endSession(found.sessionId, 'whip_delete');
+        const found = findWhip(resourceId);
+        if (!found) return sendWhipError(res, 404, 'session_not_found', 'Session not found');
+        if (!whipResourceAuthorized(req, found.entry)) return sendWhipError(res, 401, 'unauthorized', 'Bearer token required for this resource');
+        await endSession(found.sess.sessionId, 'whip_delete');
         res.writeHead(200, WHIP_CORS);
         res.end();
     }
@@ -409,8 +472,9 @@ function createWebrtc({ rt, log = console, exit = (code) => process.exit(code), 
             const kMatch = WHIP_KEY_RE.exec(url.pathname);
             const sMatch = WHIP_SESSION_RE.exec(url.pathname);
             if (req.method === 'POST' && kMatch) return safe(handleWhipPost(req, res, decodeURIComponent(kMatch[1])), 'whip post');
-            if (req.method === 'PATCH' && sMatch) return handleWhipPatch(req, res, sMatch[1]);
+            if (req.method === 'PATCH' && sMatch) return safe(handleWhipPatch(req, res, sMatch[1]), 'whip patch');
             if (req.method === 'DELETE' && sMatch) return safe(handleWhipDelete(req, res, sMatch[1]), 'whip delete');
+            if (sMatch || kMatch) { res.writeHead(405, { ...WHIP_CORS, Allow: sMatch ? 'PATCH, DELETE, OPTIONS' : 'POST, OPTIONS' }); return res.end(); }
             res.writeHead(404, WHIP_CORS);
             return res.end();
         }
