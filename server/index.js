@@ -9,6 +9,7 @@
  * start() is what the tests use too: it takes a config plus injectable clock/fetch/log (and a database handle).
  */
 const path = require('path');
+const { gracefulStop } = require('openvibe-sdk/service');
 const { load } = require('./config');
 const { openRuntime } = require('./store');
 const { createKeyStore, createAuth } = require('./auth');
@@ -47,13 +48,18 @@ async function start({ config, clock, fetchImpl = globalThis.fetch, log = consol
 if (require.main === module) {
     require('dotenv').config({ path: process.env.OPENRE_ENV_FILE || path.join(process.cwd(), '.env') });
     start().then((h) => {
-        const shutdown = (sig) => {
-            console.log(`[openre-api] ${sig}: shutting down (workers are separate processes and keep running)`);
-            h.close().then(() => process.exit(0), () => process.exit(1));
-            setTimeout(() => process.exit(1), 10000).unref();
-        };
-        process.on('SIGTERM', () => shutdown('SIGTERM'));
-        process.on('SIGINT', () => shutdown('SIGINT'));
+        // SIGTERM/SIGINT (openvibe-sdk/service, docs/service.md's OpenRe.Stream entry): the keys poller stops, requests
+        // in flight get 8 s, then the store closes in today's order (Valkey, then the database); a step that throws is
+        // logged and the stop goes on, and a clean stop exits 0. Past the 10 s deadline the process exits 1. Workers
+        // are separate processes and keep running.
+        gracefulStop({
+            name: 'openre-api',
+            server: h.server,
+            stop: [() => h.keys.stop()],
+            close: [() => h.app.locals.valkey && h.app.locals.valkey.close(), () => h.rt.db.close()],
+            drainMs: 8000,
+            deadlineMs: 10000,
+        });
     }).catch((err) => {
         console.error(`[openre-api] failed to start: ${err.stack || err}`);
         process.exit(1);
