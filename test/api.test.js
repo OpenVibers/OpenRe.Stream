@@ -26,6 +26,33 @@ t('boot', async () => {
     assert.ok(Array.isArray(ready.body.workers) && 'coordinator' in ready.body && 'store' in ready.body, 'the preflight fields stay');
 });
 
+t('readiness follows the protocol of each stored stream definition', async () => {
+    for (const [protocol, kind, otherKind] of [
+        ['rtmp', 'rtmp-ingest', 'jsmpeg'],
+        ['jsmpeg', 'jsmpeg', 'rtmp-ingest'],
+        ['webrtc', 'webrtc', 'rtmp-ingest'],
+    ]) {
+        const h = await bootApi();
+        try {
+            await h.rt.store.definitions.create({ owner_subject: OWNER, protocols: [protocol] });
+            for (const workerKind of ['restream', otherKind]) {
+                const worker = await h.rt.store.workers.register({ kind: workerKind });
+                await h.rt.store.workers.ready(worker.id);
+            }
+            const missing = await request(h.base, 'GET', '/api/ready');
+            assert.ok(missing.body.degraded.includes('workers'), `${protocol} needs a ${kind} worker`);
+
+            const worker = await h.rt.store.workers.register({ kind });
+            await h.rt.store.workers.ready(worker.id);
+            const ready = await request(h.base, 'GET', '/api/ready');
+            assert.ok(!ready.body.degraded.includes('workers'), `${protocol} has its required worker`);
+            assert.strictEqual(ready.body.checks.workers.status, 'ok');
+        } finally {
+            await h.close();
+        }
+    }
+});
+
 t('anonymous and ungranted callers are refused with problem+json', async () => {
     const r = await request(api.base, 'GET', '/api/v1/streams');
     assert.strictEqual(r.status, 401);
