@@ -395,9 +395,43 @@ t('slot: offline RTMP slot with a subject and a migrated definition passes; live
     assert.strictEqual(r.slot.status, 'SKIP');
 });
 
+t('slot all: one line per Live slot by the same rules, read-only, FAIL if any slot fails', async () => {
+    const dbs = await makeDbs();
+    let r = await preflight(opts(dbs, ['--only', 'slot', '--all-slots']), host(dbs));
+    assert.deepStrictEqual(r.results.map((x) => x.id), ['slot:12']);
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(byId(r)['slot:12'].detail, byId(await preflight(opts(dbs, ['--only', 'slot', '--slot', '12']), host(dbs))).slot.detail);
+
+    const l = new Database(dbs.livePath);
+    await l.prepare("INSERT INTO users (id, username) VALUES (6, 'nosub')").run();
+    await l.prepare("INSERT INTO managed_streams (id, user_id, slug, title, protocol, streaming_method) VALUES (13, 6, 'x', 'X', 'rtmp', 'obs'), (14, 5, 'y', 'Y', 'webrtc', 'browser')").run();
+    l.close();
+    const before = (await dbs.openre.prepare('SELECT count(*) AS n FROM migration_map').get()).n;
+    r = await preflight(opts(dbs, ['--only', 'slot', '--slot', 'all']), host(dbs));
+    assert.deepStrictEqual(r.results.map((x) => [x.id, x.status]), [['slot:12', 'PASS'], ['slot:13', 'FAIL'], ['slot:14', 'FAIL']]);
+    assert.match(r.results[1].detail, /no canonical subject/);
+    assert.match(r.results[2].detail, /not an RTMP slot/);
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(Number((await dbs.openre.prepare('SELECT count(*) AS n FROM migration_map').get()).n), Number(before), 'writes nothing');
+    assert.match(format(r), /^PASS {3}slot:12 /m);
+
+    // no --only: the per-slot lines replace the single slot line
+    r = await preflight(opts(dbs, ['--all-slots']), host(dbs));
+    assert.deepStrictEqual(r.results.filter((x) => x.id.startsWith('slot')).map((x) => x.id), ['slot:12', 'slot:13', 'slot:14']);
+
+    const empty = await makeDbs();
+    const e = new Database(empty.livePath);
+    await e.prepare('DELETE FROM managed_streams').run();
+    e.close();
+    r = await preflight(opts(empty, ['--only', 'slot', '--slot', 'all']), host(empty));
+    assert.strictEqual(r.results[0].status, 'WARN');
+});
+
 t('arguments, ss parsing and the secret comparison', () => {
     assert.throws(() => parseArgs(['--only', 'nope']), /unknown check nope/);
     assert.throws(() => parseArgs(['--slot', 'abc']), /--slot/);
+    assert.strictEqual(parseArgs(['--slot', 'all']).slot, 'all');
+    assert.strictEqual(parseArgs(['--all-slots']).slot, 'all');
     assert.throws(() => parseArgs(['--frobnicate']), /unknown argument/);
     assert.deepStrictEqual(parseArgs(['--host-ip', '1.2.3.4,5.6.7.8', '--host-ip', '9.9.9.9']).hostIps, ['1.2.3.4', '5.6.7.8', '9.9.9.9']);
     assert.deepStrictEqual(parseSsListeners('LISTEN 0 511 127.0.0.1:1936 0.0.0.0:*\nLISTEN 0 511 [::]:1936 [::]:*\nLISTEN 0 511 *:1936 *:*\nLISTEN 0 511 127.0.0.1:19360 0.0.0.0:*\n', 1936), ['127.0.0.1', '::', '*']);
