@@ -8,11 +8,11 @@
   "port": 4500,
   "rtmpPort": 1936,
   "domain": "openre.stream",
-  "contracts": "openvibe-contracts v0.76.0 (openvibe-sdk v0.21.3, openvibe-shared v1.28.0)",
+  "contracts": "openvibe-contracts v0.76.0 (openvibe-sdk v0.21.3, openvibe-shared v2.3.1)",
   "protocols": {
     "rtmp": "ingest ported (openre-rtmp-ingest)",
     "restream": "RTMP source to RTMP/RTMPS/SRT destinations ported (openre-restream-worker)",
-    "webrtc": "not ported (workers/webrtc.js: one worker will own WHIP ingest, the SFU and viewer signaling; worker interface only)",
+    "webrtc": "worker ported (workers/webrtc.js + workers/webrtc/{sfu,sdp,signaling}.js, run by openre-webrtc@): WHIP (RFC 9725) ingest by key on the mediasoup SFU, browser broadcasters over /b/<key> and viewers over /w/<playback id>, loopback RTP egress for restream/recording/thumbnails, recording through Media's RTP ingest; generations/leases/drain; refuses to start in production without MEDIASOUP_ANNOUNCED_IP",
     "jsmpeg": "worker ported (workers/jsmpeg.js): MPEG-TS POST admission by key, WS viewers, loopback data tap, restream (re-encode), generations/drain; no recording (parity)"
   },
   "capabilities": [
