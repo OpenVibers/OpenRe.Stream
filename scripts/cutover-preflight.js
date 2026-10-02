@@ -3,7 +3,7 @@
 /**
  * Read-only pre-flight for the RTMP cutover (docs/cutover.md). Run on the host as root:
  *
- *   sudo node /opt/openre.stream/current/scripts/cutover-preflight.js [--only a,b] [--slot <id>] [--json]
+ *   sudo node /opt/openre.stream/current/scripts/cutover-preflight.js [--only a,b] [--slot <id>|all] [--json]
  *
  * Checks (in this order; --only / --skip pick some):
  *   release   `current` points at the expected release (--expect-release, else origin/main of
@@ -21,7 +21,8 @@
  *             OV_OAUTH_CLIENT_SECRET, and the running Live process was started with them
  *   events    Events has Live's openre.session.* subscription to /internal/openre-events, enabled,
  *             with the secret Live holds (compared by hash, never printed), and no dead deliveries
- *   slot      only with --slot <id>: the Live slot and its OpenRe definition, for the per-slot step
+ *   slot      only with --slot <id>: the Live slot and its OpenRe definition, for the per-slot step;
+ *             --slot all (or --all-slots): every Live slot, one slot:<id> line each, same rules
  *
  * "port": from the host itself a connection to its own public address never crosses the provider
  * edge, so the result is MANUAL there. Prove it from outside: run `--only port` on any machine
@@ -420,9 +421,8 @@ async function checkEvents(ctx) {
     return [r.pending ? 'WARN' : 'PASS', `${s.id} enabled, secret matches Live's${r.pending ? `, ${r.pending} deliveries waiting or retrying` : ', nothing waiting'}`];
 }
 
-async function checkSlot(ctx) {
+async function checkSlot(ctx, id = Number(ctx.opts.slot)) {
     const { opts } = ctx;
-    const id = Number(opts.slot);
     const live = await withDb(ctx.deps, opts.liveDb, async (db) => {
         const slot = await db.prepare('SELECT id, user_id, slug, title, protocol, streaming_method, ingest_authority, openre_stream_id FROM managed_streams WHERE id = ?').get(id);
         if (!slot) return { slot: null };
@@ -461,6 +461,21 @@ async function checkSlot(ctx) {
     return ['PASS', facts.join('; ')];
 }
 
+/** `--slot all`: every Live managed stream, one result each, by the same per-slot rules. */
+async function checkAllSlots(ctx) {
+    const rows = await withDb(ctx.deps, ctx.opts.liveDb, (db) => db.prepare('SELECT id FROM managed_streams ORDER BY id').all());
+    if (rows.error) return [{ id: 'slot', status: 'FAIL', detail: rows.error }];
+    if (!rows.length) return [{ id: 'slot', status: 'WARN', detail: 'Live has no managed streams' }];
+    const out = [];
+    for (const { id } of rows) {
+        let status;
+        let detail;
+        try { [status, detail] = await checkSlot(ctx, Number(id)); } catch (err) { status = 'FAIL'; detail = `check crashed: ${err.message}`; }
+        out.push({ id: `slot:${id}`, status, detail });
+    }
+    return out;
+}
+
 const RUNNERS = { release: checkRelease, service: checkService, env: checkEnv, bind: checkBind, dns: checkDns, port: checkPort, db: checkDb, 'live-env': checkLiveEnv, events: checkEvents, slot: checkSlot };
 
 // ── entry ───────────────────────────────────────────────────────────────────
@@ -473,6 +488,7 @@ function parseArgs(argv) {
         const a = argv[i];
         if (a === '--json') opts.json = true;
         else if (a === '--strict') opts.strict = true;
+        else if (a === '--all-slots') opts.slot = 'all';
         else if (a === '--only') { opts.only = take(i).split(',').map((s) => s.trim()).filter(Boolean); i++; }
         else if (a === '--skip') { opts.skip = take(i).split(',').map((s) => s.trim()).filter(Boolean); i++; }
         else if (a === '--host-ip') { opts.hostIps.push(...take(i).split(',').map((s) => s.trim()).filter(Boolean)); i++; }
@@ -486,7 +502,7 @@ function parseArgs(argv) {
     opts.openreUrl = String(opts.openreUrl).replace(/\/+$/, '');
     opts.api = String(opts.api).replace(/\/+$/, '');
     for (const c of [...(opts.only || []), ...opts.skip]) if (!CHECKS.includes(c)) throw new Error(`unknown check ${c} (${CHECKS.join(', ')})`);
-    if (opts.slot != null && !/^\d+$/.test(String(opts.slot))) throw new Error('--slot takes a Live managed stream id');
+    if (opts.slot != null && !/^(\d+|all)$/.test(String(opts.slot))) throw new Error('--slot takes a Live managed stream id, or `all`');
     if (!Number.isInteger(opts.port) || opts.port <= 0) throw new Error('--port must be a TCP port');
     return opts;
 }
@@ -497,6 +513,10 @@ async function preflight(opts, deps = realDeps()) {
     const results = [];
     for (const id of wanted) {
         if (id === 'slot' && opts.slot == null) { results.push({ id, status: 'SKIP', detail: 'pass --slot <id>' }); continue; }
+        if (id === 'slot' && opts.slot === 'all') {
+            try { results.push(...await checkAllSlots(ctx)); } catch (err) { results.push({ id, status: 'FAIL', detail: `check crashed: ${err.message}` }); }
+            continue;
+        }
         let status;
         let detail;
         try { [status, detail] = await RUNNERS[id](ctx); } catch (err) { status = 'FAIL'; detail = `check crashed: ${err.message}`; }
@@ -515,7 +535,7 @@ function format(report) {
 if (require.main === module) {
     let opts;
     try { opts = parseArgs(process.argv.slice(2)); } catch (err) { console.error(`cutover-preflight: ${err.message}`); process.exit(2); }
-    if (opts.help) { console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(2, 37).join('\n')); process.exit(0); }
+    if (opts.help) { console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(2, 38).join('\n')); process.exit(0); }
     preflight(opts).then((report) => {
         console.log(opts.json ? JSON.stringify(report, null, 2) : format(report));
         process.exit(report.ok ? 0 : 1);
