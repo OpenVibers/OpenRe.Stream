@@ -126,15 +126,26 @@ t('a WHIP offer is answered, goes live on ICE, and a PlainRTP egress receives it
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
-    const res = await httpReq(port, 'POST', `/whip/${keyA}`, { headers: { 'content-type': 'application/sdp' }, body: pc.localDescription.sdp });
+    // Trickle-only, as a browser behind NAT publishes: the offer carries no candidates, they follow
+    // in a PATCH. The transport is ICE-lite, so ICE must connect from the client's checks alone.
+    const fullOffer = pc.localDescription.sdp;
+    const candidateLines = fullOffer.split('\r\n').filter((l) => l.startsWith('a=candidate:'));
+    assert.ok(candidateLines.length > 0, 'the client gathered candidates to trickle');
+    const trickleOffer = fullOffer.split('\r\n').filter((l) => !l.startsWith('a=candidate:') && l !== 'a=end-of-candidates').join('\r\n');
+    const res = await httpReq(port, 'POST', `/whip/${keyA}`, { headers: { 'content-type': 'application/sdp' }, body: trickleOffer });
     assert.strictEqual(res.status, 201, `WHIP answer (${res.status}): ${res.body.slice(0, 200)}`);
     assert.match(res.body, /a=recvonly/, 'the answer is a recvonly SDP');
     assert.match(res.body, /a=ice-lite/);
     assert.match(res.headers.location, /\/whip\/session\/[0-9a-f]{16,}$/, 'Location points at the session resource');
     assert.match(String(res.headers.etag), /^"/, 'an ETag is returned');
 
+    const resourceId = res.headers.location.split('/').pop();
+    const ufrag = /a=ice-ufrag:(\S+)/.exec(fullOffer)[1];
+    const trickle = await httpReq(port, 'PATCH', `/whip/session/${resourceId}`, { headers: { 'content-type': 'application/trickle-ice-sdpfrag', 'if-match': res.headers.etag }, body: `a=ice-ufrag:${ufrag}\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n${candidateLines.join('\r\n')}\r\na=end-of-candidates\r\n` });
+    assert.strictEqual(trickle.status, 204, `trickled candidates are acknowledged (${trickle.status}): ${trickle.body}`);
+
     await pc.setRemoteDescription({ type: 'answer', sdp: res.body });
-    pub = { pc, track, feed: startDummyVideo(track), resourceId: res.headers.location.split('/').pop() };
+    pub = { pc, track, feed: startDummyVideo(track), resourceId, answer: res.body, etag: res.headers.etag };
     await waitFor(() => ['connected', 'completed'].includes(pc.connectionState), { what: 'WHIP publisher ICE connected', timeoutMs: 20000 });
 
     const sess = await waitFor(async () => { const s = (await rt.store.sessions.ofWorker(worker.runtime.me.id)).find((x) => x.definition_id === defA.id); return s && s.state === 'live' ? s : null; }, { what: 'session live after ICE', timeoutMs: 15000 });
@@ -158,7 +169,45 @@ t('a WHIP offer is answered, goes live on ICE, and a PlainRTP egress receives it
     await waitFor(() => udp.packets > 0, { what: 'RTP on the PlainRTP egress', timeoutMs: 20000 });
 
     const patch = await httpReq(port, 'PATCH', `/whip/session/${pub.resourceId}`, { headers: { 'content-type': 'application/trickle-ice-sdpfrag' }, body: 'a=ice-ufrag:x\r\na=candidate:1 1 udp 1 127.0.0.1 9999 typ host\r\n' });
-    assert.strictEqual(patch.status, 204, 'trickle ICE is acknowledged');
+    assert.strictEqual(patch.status, 204, 'a candidate of an unknown ICE generation is silently discarded');
+});
+
+t('WHIP resource: PATCH/DELETE preconditions and auth, and an ICE restart that keeps media flowing', async () => {
+    const at = `/whip/session/${pub.resourceId}`;
+    const sdpfrag = { 'content-type': 'application/trickle-ice-sdpfrag' };
+    const patch = (headers, body) => httpReq(port, 'PATCH', at, { headers: { ...sdpfrag, ...headers }, body });
+    const unknown = `/whip/session/${crypto.randomBytes(16).toString('hex')}`;
+    assert.strictEqual((await httpReq(port, 'PATCH', unknown, { headers: sdpfrag, body: 'a=end-of-candidates\r\n' })).status, 404);
+    assert.strictEqual((await httpReq(port, 'DELETE', unknown)).status, 404, 'DELETE of an unknown resource is 404');
+    assert.strictEqual((await httpReq(port, 'GET', at)).status, 405);
+    assert.strictEqual((await httpReq(port, 'PATCH', at, { headers: { 'content-type': 'application/sdp' }, body: 'a=end-of-candidates\r\n' })).status, 415);
+    assert.strictEqual((await patch({ 'if-match': '"stale"' }, 'a=end-of-candidates\r\n')).status, 412);
+    assert.strictEqual((await patch({}, 'not an sdp fragment')).status, 400);
+    assert.strictEqual((await patch({ authorization: 'Bearer ork_wrong' }, 'a=end-of-candidates\r\n')).status, 401, 'a Bearer that is not the key is refused');
+    assert.strictEqual((await httpReq(port, 'DELETE', at, { headers: { authorization: 'Bearer ork_wrong' } })).status, 401);
+
+    // ICE restart (RFC 9725 §4.3.2): new client credentials → new server credentials and a new ETag.
+    const before = udp.packets;
+    pub.pc.restartIce();
+    const offer = await pub.pc.createOffer({ iceRestart: true });
+    await pub.pc.setLocalDescription(offer);
+    const ufrag = /a=ice-ufrag:(\S+)/.exec(pub.pc.localDescription.sdp)[1];
+    const pwd = /a=ice-pwd:(\S+)/.exec(pub.pc.localDescription.sdp)[1];
+    const restart = await patch({ 'if-match': '*', authorization: `Bearer ${keyA}` }, `a=ice-ufrag:${ufrag}\r\na=ice-pwd:${pwd}\r\n`);
+    assert.strictEqual(restart.status, 200, `ICE restart (${restart.status}): ${restart.body}`);
+    assert.match(restart.headers['content-type'], /^application\/trickle-ice-sdpfrag/);
+    assert.notStrictEqual(restart.headers.etag, pub.etag, 'a restart starts a new ICE session');
+    const serverUfrag = /a=ice-ufrag:(\S+)/.exec(restart.body)[1];
+    const serverPwd = /a=ice-pwd:(\S+)/.exec(restart.body)[1];
+    assert.notStrictEqual(serverUfrag, /a=ice-ufrag:(\S+)/.exec(pub.answer)[1], 'the server has new credentials');
+    assert.strictEqual((await patch({ 'if-match': pub.etag }, 'a=end-of-candidates\r\n')).status, 412, 'the old ICE session\'s ETag no longer matches');
+    assert.strictEqual((await patch({ 'if-match': restart.headers.etag }, 'a=end-of-candidates\r\n')).status, 204);
+    pub.etag = restart.headers.etag;
+    pub.answer = pub.answer.replace(/a=ice-ufrag:\S+/g, `a=ice-ufrag:${serverUfrag}`).replace(/a=ice-pwd:\S+/g, `a=ice-pwd:${serverPwd}`);
+    await pub.pc.setRemoteDescription({ type: 'answer', sdp: pub.answer });
+    await waitFor(() => ['connected', 'completed'].includes(pub.pc.connectionState), { what: 'publisher ICE after restart', timeoutMs: 20000 });
+    await waitFor(() => udp.packets > before + 20, { what: 'RTP still flowing after the ICE restart', timeoutMs: 20000 });
+    assert.strictEqual((await rt.store.sessions.get(sessionA)).state, 'live', 'the session stays live across the restart');
 });
 
 t('a WS viewer consumes by playback id and is counted in the heartbeat', async () => {
@@ -240,6 +289,21 @@ t('admission refuses a bad key and a wrong-protocol key', async () => {
     await assert.rejects(() => wsOpen(`ws://127.0.0.1:${port}/b/ork_${'x'.repeat(43)}`), /http 403/, 'bad key refused');
     const wrong = await rt.store.definitions.create({ owner_subject: OWNER, protocols: ['rtmp'] });
     await assert.rejects(() => wsOpen(`ws://127.0.0.1:${port}/b/${wrong.key.key}`), /http 403/, 'rtmp-only slot refused on the WebRTC listener');
+});
+
+t('a WHIP resource created with a Bearer needs it again to be deleted', async () => {
+    const created = await rt.store.definitions.create({ owner_subject: OWNER, protocols: ['webrtc'] });
+    const pc = new werift.RTCPeerConnection({});
+    pc.addTransceiver(new werift.MediaStreamTrack({ kind: 'video' }), { direction: 'sendonly' });
+    await pc.setLocalDescription(await pc.createOffer());
+    const auth = { authorization: `Bearer ${created.key.key}` };
+    const res = await httpReq(port, 'POST', `/whip/${created.key.key}`, { headers: { 'content-type': 'application/sdp', ...auth }, body: pc.localDescription.sdp });
+    assert.strictEqual(res.status, 201, `WHIP answer (${res.status}): ${res.body.slice(0, 200)}`);
+    const at = new URL(res.headers.location).pathname;
+    assert.strictEqual((await httpReq(port, 'DELETE', at)).status, 401, 'no Bearer');
+    assert.strictEqual((await httpReq(port, 'DELETE', at, { headers: auth })).status, 200);
+    assert.strictEqual((await httpReq(port, 'DELETE', at, { headers: auth })).status, 404, 'the resource is gone');
+    pc.close();
 });
 
 t('DELETE ends the WHIP session', async () => {

@@ -112,6 +112,17 @@ function createSfu({ config, log = console }) {
         return transport;
     }
 
+    /**
+     * WHIP ICE restart (RFC 9725 §4.3.2). mediasoup's WebRtcTransport is ICE-lite and always the
+     * controlled agent: it has no remote candidates to add (it learns the peer's address from the
+     * peer's connectivity checks), so a restart only issues new local credentials.
+     */
+    async function restartIce(sessionId, peerId, transportId) {
+        const transport = lookupTransport(sessionId, peerId, transportId);
+        if (!transport) throw new Error('Transport not found');
+        return await transport.restartIce();
+    }
+
     async function produce(sessionId, peerId, transportId, kind, rtpParameters) {
         const r = room(sessionId);
         if (!r) throw new Error('Router not found');
@@ -270,7 +281,7 @@ function createSfu({ config, log = console }) {
         off: (...args) => emitter.off(...args),
         init, setAnnouncedIp,
         getOrCreateRouter, hasRouter, getRouterCapabilities,
-        createTransport, connectTransport, produce, consume,
+        createTransport, connectTransport, restartIce, produce, consume,
         createPlainConsumer, closePlainConsumer,
         findProducerByKind, hasProducers, getProducers, getViewerCount,
         closePeer, closeSession, closeAll,

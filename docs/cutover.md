@@ -414,8 +414,9 @@ done **once** (the worker generation and its ports), then per slot like every pr
   `webrtc` is in `OPENRE_PROTOCOLS` (brief §4.5).
 - **B4 Broadcaster:** regenerate the key, then either
   - **WHIP:** POST an SDP offer to `https://ingest.openre.stream/whip/<key>` (Bearer optional, must
-    match) → `201` + the answer + `Location: /whip/session/<id>`; trickle with `PATCH`, end with
-    `DELETE`. The session goes live when ICE connects.
+    match) → `201` + the answer + `Location: /whip/session/<id>` + an `ETag`; trickle or restart ICE
+    with `PATCH` (`application/trickle-ice-sdpfrag`, `If-Match`), end with `DELETE` (both need the
+    POST's Bearer again if it sent one). The session goes live when ICE connects.
   - **Browser:** connect `ws(s)://ingest.openre.stream/b/<key>` and run the mediasoup-client
     `sfu-get-capabilities → sfu-create-transport → sfu-connect-transport → sfu-produce` flow; the
     session goes live on the first video producer.
