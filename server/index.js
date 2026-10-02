@@ -49,14 +49,14 @@ if (require.main === module) {
     require('dotenv').config({ path: process.env.OPENRE_ENV_FILE || path.join(process.cwd(), '.env') });
     start().then((h) => {
         // SIGTERM/SIGINT (openvibe-sdk/service, docs/service.md's OpenRe.Stream entry): the keys poller stops, requests
-        // in flight get 8 s, then the store closes in today's order (Valkey, then the database); a step that throws is
-        // logged and the stop goes on, and a clean stop exits 0. Past the 10 s deadline the process exits 1. Workers
-        // are separate processes and keep running.
+        // in flight get 8 s, then Valkey and the database close in that order. A database close failure exits 1;
+        // past the 10 s deadline the process also exits 1. Workers are separate processes and keep running.
         gracefulStop({
             name: 'openre-api',
             server: h.server,
             stop: [() => h.keys.stop()],
-            close: [() => h.app.locals.valkey && h.app.locals.valkey.close(), () => h.rt.db.close()],
+            close: [() => h.app.locals.valkey && h.app.locals.valkey.close()],
+            handles: [() => h.rt.db.close()],
             drainMs: 8000,
             deadlineMs: 10000,
         });

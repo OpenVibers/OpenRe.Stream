@@ -2,7 +2,7 @@
 /**
  * openvibe-sdk/service in OpenRe.Stream (plan T1, lane A): the API's SIGTERM/SIGINT shutdown is the kit's
  * gracefulStop, not a hand-written handler. The keys poller stops, requests in flight drain for 8 s, then the
- * store closes in today's order (Valkey, then the database); a step that throws is logged and the stop goes on,
+ * store closes in today's order (Valkey, then the database); a database close failure exits 1,
  * a clean stop exits 0, and past the 10 s deadline the process exits 1. The static half reads server/index.js;
  * the behavioural half drives gracefulStop with the same options OpenRe passes, exits stubbed.
  */
@@ -30,7 +30,8 @@ t('the one stop names openre-api, passes the server and the store steps, and use
     assert.match(call, /name: 'openre-api'/);
     assert.match(call, /server: h\.server/);
     assert.match(call, /stop: \[\(\) => h\.keys\.stop\(\)\]/, 'the keys poller stops first');
-    assert.match(call, /close: \[\(\) => h\.app\.locals\.valkey && h\.app\.locals\.valkey\.close\(\), \(\) => h\.rt\.db\.close\(\)\]/, "today's order: Valkey, then the database");
+    assert.match(call, /close: \[\(\) => h\.app\.locals\.valkey && h\.app\.locals\.valkey\.close\(\)\]/);
+    assert.match(call, /handles: \[\(\) => h\.rt\.db\.close\(\)\]/, 'the database closes after Valkey and its failure exits 1');
     assert.match(call, /drainMs: 8000/);
     assert.match(call, /deadlineMs: 10000/);
     assert.doesNotMatch(call, /deadlineExitCode/, 'the default exit 1 past the deadline is kept');
@@ -48,7 +49,7 @@ t('the stop steps run once, in order, after the drain; a clean stop exits 0 and 
     const kit = gracefulStop({
         name: 'openre-api', server,
         stop: [() => keys.stop()],
-        close: [() => valkey.close(), () => db.close()],
+        close: [() => valkey.close()], handles: [() => db.close()],
         drainMs: 8000, deadlineMs: 10000, signals: false,
         exit: (c) => { exited = c; exits++; }, log: quiet,
     });
@@ -98,6 +99,24 @@ t('a close step that throws is logged, the stop goes on and exits 0', async () =
     });
     assert.strictEqual(await kit.stop('SIGTERM'), 0);
     assert.deepStrictEqual(order, ['valkey.close', 'db.close']);
+});
+
+t('a database close failure exits 1 after Valkey closes', async () => {
+    const order = [];
+    const errors = [];
+    let exited = null;
+    const kit = gracefulStop({
+        name: 'openre-api', server: null,
+        stop: [],
+        close: [() => order.push('valkey.close')],
+        handles: [() => { order.push('db.close'); throw new Error('database down'); }],
+        drainMs: 8000, deadlineMs: 10000, signals: false,
+        exit: (c) => { exited = c; }, log: { ...quiet, error: (msg) => errors.push(msg) },
+    });
+    assert.strictEqual(await kit.stop('SIGTERM'), 1);
+    assert.strictEqual(exited, 1);
+    assert.deepStrictEqual(order, ['valkey.close', 'db.close']);
+    assert.match(errors.join('\n'), /database down/);
 });
 
 t('past the deadline the process exits 1, even with a close step stuck', async () => {
