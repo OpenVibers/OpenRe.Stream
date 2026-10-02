@@ -266,12 +266,14 @@ const CANDIDATE_RE = /^candidate:\S+ \d+ \S+ \d+ \S+ \d+ typ \S+/i;
 
 /**
  * Read a WHIP PATCH body, an RFC 8840 "application/trickle-ice-sdpfrag": the ICE credentials it
- * names (session or media level, the first wins) and how many candidates it carries. Throws
- * (code 'invalid_sdpfrag') on anything that is not an SDP fragment or on a malformed candidate.
+ * names (session or media level, the first wins), how many candidates it carries, and the ICE
+ * attributes the answer fragment is expected to mirror (RFC 9725 §4.3.3: ice-options, ice-pacing,
+ * ice-lite, end-of-candidates). Throws (code 'invalid_sdpfrag') on anything that is not an SDP
+ * fragment or on a malformed candidate.
  */
 function parseIceFragment(text) {
     if (typeof text !== 'string') throw Object.assign(new Error('missing sdpfrag'), { code: 'invalid_sdpfrag' });
-    const out = { ufrag: null, pwd: null, candidates: 0, endOfCandidates: false };
+    const out = { ufrag: null, pwd: null, candidates: 0, endOfCandidates: false, iceOptions: null, icePacing: null, iceLite: false };
     for (const raw of text.split(/\r?\n/)) {
         const line = raw.trim();
         if (!line) continue;
@@ -281,6 +283,9 @@ function parseIceFragment(text) {
         if (attr.startsWith('ice-ufrag:')) out.ufrag = out.ufrag || attr.slice(10).trim();
         else if (attr.startsWith('ice-pwd:')) out.pwd = out.pwd || attr.slice(8).trim();
         else if (attr === 'end-of-candidates') out.endOfCandidates = true;
+        else if (attr === 'ice-lite') out.iceLite = true;
+        else if (attr.startsWith('ice-options:')) out.iceOptions = out.iceOptions == null ? attr.slice(12).trim() : out.iceOptions;
+        else if (attr.startsWith('ice-pacing:')) out.icePacing = out.icePacing == null ? attr.slice(11).trim() : out.icePacing;
         else if (attr.startsWith('candidate:')) {
             if (!CANDIDATE_RE.test(attr)) throw Object.assign(new Error('malformed candidate'), { code: 'invalid_sdpfrag' });
             out.candidates++;
@@ -289,9 +294,20 @@ function parseIceFragment(text) {
     return out;
 }
 
-/** The sdpfrag a WHIP resource answers an ICE restart with: the media server's new credentials. */
-function buildIceFragment(iceParameters) {
-    return ['a=ice-lite', `a=ice-ufrag:${iceParameters.usernameFragment}`, `a=ice-pwd:${iceParameters.password}`, ''].join('\r\n');
+/**
+ * The sdpfrag a WHIP resource answers an ICE restart with (RFC 9725 §4.3.3): the media server's new
+ * credentials, plus exactly the ice-options / ice-pacing / ice-lite / end-of-candidates attributes
+ * the request fragment carried — the server repeats what the client's session declared, it does not
+ * assume any of them (`mirror` is a parsed request fragment; nothing is mirrored by default).
+ */
+function buildIceFragment(iceParameters, mirror = {}) {
+    const lines = [`a=ice-ufrag:${iceParameters.usernameFragment}`, `a=ice-pwd:${iceParameters.password}`];
+    if (mirror.iceOptions) lines.push(`a=ice-options:${mirror.iceOptions}`);
+    if (mirror.icePacing) lines.push(`a=ice-pacing:${mirror.icePacing}`);
+    if (mirror.iceLite) lines.push('a=ice-lite');
+    if (mirror.endOfCandidates) lines.push('a=end-of-candidates');
+    lines.push('');
+    return lines.join('\r\n');
 }
 
 /**

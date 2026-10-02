@@ -47,7 +47,7 @@ const WHIP_CORS = Object.freeze({
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'POST, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, If-Match',
-    'Access-Control-Expose-Headers': 'Location, X-WHIP-ERROR, ETag',
+    'Access-Control-Expose-Headers': 'Location, X-WHIP-ERROR, ETag, WWW-Authenticate',
     'Access-Control-Max-Age': '86400',
     'Cross-Origin-Resource-Policy': 'cross-origin',
 });
@@ -200,7 +200,10 @@ function createWebrtc({ rt, log = console, exit = (code) => process.exit(code), 
     };
 
     function sendWhipError(res, status, code, message) {
-        res.writeHead(status, { ...WHIP_CORS, 'content-type': 'application/json', 'X-WHIP-ERROR': code });
+        const headers = { ...WHIP_CORS, 'content-type': 'application/json', 'X-WHIP-ERROR': code };
+        // RFC 9725 §4.5: a 401 tells the client how to authenticate (the same scheme the endpoint takes).
+        if (status === 401) headers['WWW-Authenticate'] = 'Bearer';
+        res.writeHead(status, headers);
         res.end(JSON.stringify({ error: message, error_code: code }));
     }
 
@@ -326,7 +329,8 @@ function createWebrtc({ rt, log = console, exit = (code) => process.exit(code), 
      * trickled candidates are acknowledged and discarded: the client's connectivity checks reach
      * the transport's own candidates (sent in the answer) and mediasoup learns the client's address
      * from them. New ICE credentials in the fragment are an ICE restart: the transport gets new
-     * credentials, answered 200 with them and a new ETag; the session stays up either way.
+     * credentials, answered 200 with them (and the ICE attributes the client's fragment carried) and
+     * a new ETag; the session stays up either way. Every PATCH must carry If-Match (428 without one).
      */
     async function handleWhipPatch(req, res, resourceId) {
         const found = findWhip(resourceId);
@@ -336,8 +340,12 @@ function createWebrtc({ rt, log = console, exit = (code) => process.exit(code), 
         if (!/^application\/trickle-ice-sdpfrag\s*(;|$)/i.test(req.headers['content-type'] || '')) {
             return sendWhipError(res, 415, 'unsupported_media_type', 'PATCH body must be application/trickle-ice-sdpfrag');
         }
+        // RFC 9725 §4.3.1: a PATCH on a WHIP resource MUST carry If-Match, so a missing one is 428
+        // (not 412: the client never named an ICE session to condition on). '*' and the current
+        // ETag both name the one in force.
         const ifMatch = (req.headers['if-match'] || '').trim();
-        if (ifMatch && ifMatch !== '*' && ifMatch !== entry.etag) return sendWhipError(res, 412, 'etag_mismatch', 'If-Match does not name the current ICE session');
+        if (!ifMatch) return sendWhipError(res, 428, 'precondition_required', 'If-Match is required on a WHIP resource (RFC 9725 §4.3.1)');
+        if (ifMatch !== '*' && ifMatch !== entry.etag) return sendWhipError(res, 412, 'etag_mismatch', 'If-Match does not name the current ICE session');
         let body;
         try { body = await readBody(req); } catch { return sendWhipError(res, 413, 'body_too_large', 'Fragment too large'); }
         let frag;
@@ -354,7 +362,7 @@ function createWebrtc({ rt, log = console, exit = (code) => process.exit(code), 
             entry.etag = newIceEtag();
             log.log(`[webrtc] WHIP ICE restart for ${sess.sessionId}`);
             res.writeHead(200, { ...WHIP_CORS, 'content-type': 'application/trickle-ice-sdpfrag', ETag: entry.etag });
-            return res.end(sdpTool.buildIceFragment(iceParameters));
+            return res.end(sdpTool.buildIceFragment(iceParameters, frag));
         }
         res.writeHead(204, WHIP_CORS);
         res.end();
