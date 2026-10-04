@@ -248,7 +248,10 @@ refuses that user's personal RTMP key (`refusesLiveIngest`).
   - (a) Launch the openre.stream UI: install `deploy/nginx/openre.stream.conf` from the release to
     `/etc/nginx/sites-available/openre.stream.conf`, run `nginx -t`, reload, and remove the entry
     from OpenVibe.Sites. The certificate and the OAuth client `openre` with redirect
-    `https://openre.stream/auth/callback` must exist. This touches the README launch rule.
+    `https://openre.stream/auth/callback` must exist. This touches the README launch rule. The
+    full file carries the `ingest.openre.stream` section too, so remove
+    `/etc/nginx/sites-enabled/ingest.openre.stream.conf` (if the WHIP slot below installed it) in
+    the same change, before `nginx -t`.
   - (b) Tell broadcasters that destinations are frozen at the cutover until (a).
 - **Hazard H4, the leaked keys.** 97 of 97 Live stream keys are identical to the pre-leak backup.
   Each slot's cutover rotates that slot's Live key (at the switch) and issues a new OpenRe key that
@@ -390,9 +393,10 @@ done **once** (the worker generation and its ports), then per slot like every pr
   host's public IP>` (required in production — the worker refuses to start without it),
   `OPENRE_WEBRTC_PUBLIC_HOST=ingest.openre.stream`, `OPENRE_MEDIASOUP_MIN_PORT/MAX_PORT=10200/10300`.
   Each worker generation picks its own loopback egress port from `OPENRE_WEBRTC_INTERNAL_PORT_MIN..MAX`.
-- **nginx (Opus).** Install the reference `ingest.openre.stream` server block in
-  `deploy/nginx/openre.stream.conf` to terminate TLS in front of the worker's 9936, with the
-  `Upgrade`/`Connection` map for `/b/*` and `/w/*`. Cert must cover `ingest.openre.stream`.
+- **nginx.** Install the `ingest.openre.stream` server block from
+  `deploy/nginx/openre.stream.conf` (TLS in front of the worker's 9936, with the
+  `Upgrade`/`Connection` map for `/b/*` and `/w/*`): the ordered steps, smoke test and rollback are
+  in "WHIP / WebRTC ingest slot" below.
 - **Deploy the worker.** `deploy.sh workers <sha>` now also starts `openre-webrtc@<sha>`; older
   generations drain and exit by themselves.
 - **Media grants.** Thumbnails upload as Media objects under namespace `live` (Media grant
@@ -428,6 +432,61 @@ done **once** (the worker generation and its ports), then per slot like every pr
 - **B-rollback:** `{"authority":"live"}` + `set-definition-state.js --state disabled`, then the
   broadcaster points WHIP/browser back at Live. Remove `webrtc` from `OPENRE_PROTOCOLS` if the whole
   protocol rolls back.
+
+## WHIP / WebRTC ingest slot (ingest.openre.stream)
+
+Puts `https://ingest.openre.stream/whip/<key>` and `wss://ingest.openre.stream/<b|w>/…` in front of
+`openre-webrtc@<sha>` (the W-A "once" steps, in order). Signaling goes through nginx on 443; the RTC
+media never does: it is UDP 10200–10300 straight to the host, never through nginx or Cloudflare. Do
+the steps in this order: the worker refuses to start without `MEDIASOUP_ANNOUNCED_IP`.
+
+1. **Cert (AGENT).** `sudo certbot certificates` lists `/etc/letsencrypt/live/openre.stream/` with
+   `*.openre.stream` (read on the host 2026-10-03, expires 2026-12-17); that covers
+   `ingest.openre.stream` and is the path the server block uses. If it is gone, issue a certificate
+   that covers `ingest.openre.stream` first and point the block's two `ssl_certificate*` lines at it:
+   `nginx -t` fails without the files.
+2. **Env (AGENT).** In `/etc/openvibe/openre.env` (names only here; never paste values into a
+   ticket): `MEDIASOUP_ANNOUNCED_IP` (this host's public address), `OPENRE_WEBRTC_PORT=9936`,
+   `OPENRE_WEBRTC_PUBLIC_HOST=ingest.openre.stream`, `OPENRE_MEDIASOUP_MIN_PORT`/`MAX_PORT`
+   (10200/10300). Keep a copy first: `sudo cp -p /etc/openvibe/openre.env /etc/openvibe/openre.env.pre-webrtc`.
+3. **Edge (OWNER).** `ingest.openre.stream` stays the DNS-only (grey cloud) record RTMP uses. Open
+   443/tcp (already open for the sites) and 10200–10300/udp at the provider edge.
+4. **Vhost (AGENT).** Until the openre.stream UI is launched (B0 (a)), install only the ingest
+   section of the release's file, then test and reload:
+   ```
+   R=/opt/openre.stream/releases/<sha>
+   sed -n '/^## >>> ingest.openre.stream/,/^## <<< ingest.openre.stream/p' $R/deploy/nginx/openre.stream.conf \
+     | sudo tee /etc/nginx/sites-available/ingest.openre.stream.conf >/dev/null
+   sudo ln -s /etc/nginx/sites-available/ingest.openre.stream.conf /etc/nginx/sites-enabled/
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+5. **Worker (AGENT).** `sudo $R/deploy/scripts/deploy.sh workers <sha>` starts
+   `openre-webrtc@<sha>.service` with the other workers; older generations drain and exit by
+   themselves. Check `systemctl status 'openre-webrtc@*'` and
+   `sudo journalctl -u 'openre-webrtc@<sha>.service' -n 50` (it logs the refusal if
+   `MEDIASOUP_ANNOUNCED_IP` is missing).
+6. **Smoke (AGENT, from off the host too).** A WHIP POST with a key OpenRe never issued must be
+   refused by the worker, not by nginx:
+   ```
+   curl -sS -o /dev/null -D - -X POST -H 'content-type: application/sdp' --data-binary $'v=0\r\n' \
+     https://ingest.openre.stream/whip/ork_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+   ```
+   PASS: TLS verifies, `409` with `x-whip-error: unknown_key`. A `502`/`504` means the worker is not
+   listening on 9936; `x-whip-error: generation not taking sessions` means it is not ready yet; a
+   `404` means the vhost did not load.
+7. **Prerequisite for robot video.** OpenVibe.Bot must publish with keys OpenRe issued
+   (`POST /api/v1/streams`, rotated with `POST /api/v1/streams/:id/keys/rotate`): Bot mints its own
+   keys today and OpenRe refuses them exactly like the smoke key. That is Bot job R5
+   (`bot-t15-r5-openvibe-bot-a`); until it ships, steps 1–6 work and a robot's camera is refused.
+
+**Rollback.** Nothing here touches RTMP, JSMPEG or the API.
+- vhost: `sudo rm /etc/nginx/sites-enabled/ingest.openre.stream.conf && sudo nginx -t && sudo systemctl reload nginx`.
+- worker: `sudo systemctl disable --now 'openre-webrtc@<sha>.service'`, only while no WebRTC session
+  is open. Every `deploy.sh workers` enables it again; leave the env in place so that generation
+  starts cleanly (without `MEDIASOUP_ANNOUNCED_IP` it fails on every start), and disable it again.
+- env (only with the protocol abandoned): `sudo cp -p /etc/openvibe/openre.env.pre-webrtc
+  /etc/openvibe/openre.env`, then a new worker generation; never `systemctl restart` a worker instance.
+- edge: close 10200–10300/udp.
 
 
 
