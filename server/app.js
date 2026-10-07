@@ -4,7 +4,7 @@ const http = require('http');
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const contracts = require('openvibe-contracts');
-const cache = require('openvibe-shared/cache-policy');
+const { createDiscoveryRoutes } = require('./discovery');
 const { createV1Router } = require('./api/v1');
 const { createSsoRoutes } = require('./auth/sso');
 const { createUiRouter } = require('./ui/routes');
@@ -150,7 +150,8 @@ function createApp({ rt, auth, keys, log = console, fetchImpl }) {
     });
 
     app.use('/auth', createSsoRoutes({ config, auth, fetchImpl }));
-    app.get('/robots.txt', (_req, res) => res.type('text/plain').set('Cache-Control', cache.htmlHeaders()).send('User-agent: *\nAllow: /$\nDisallow: /streams\nDisallow: /sessions\nDisallow: /destinations\nDisallow: /api/\nDisallow: /play/\n'));
+    // Crawl and machine-readability artifacts (robots.txt, sitemap.xml, llms.txt): openvibe-shared/seo.
+    app.use('/', createDiscoveryRoutes({ config }));
     app.use('/', createUiRouter({ rt, auth }));
 
     app.use((req, res) => contracts.http.sendProblem(res, 404, 'openre.not_found', { detail: `no route ${req.method} ${req.path}`, ctx: req.ov }));

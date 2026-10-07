@@ -68,3 +68,15 @@ test('the marked section installs on its own: map + ingest server block, nothing
     assert.match(live(section), /^map\s+\$http_upgrade\s+\$connection_upgrade/m, 'the map travels with the block');
     assert.doesNotMatch(live(section), /limit_(req|conn)_zone/, 'the openre.stream zones stay out of it');
 });
+
+test('the openre.stream vhost returns 404 for /metrics, before the catch-all', () => {
+    // The app also guards /metrics to loopback (server/app.js); every OpenVibers vhost blocks it
+    // at nginx too, so a proxied request never reaches the app.
+    const [apex] = serverBlocks(live(conf)).filter((b) => /^\s*server_name\s+openre\.stream\s*;/m.test(b) && /proxy_pass http:\/\/127\.0\.0\.1:4500;/m.test(b));
+    assert.ok(apex, 'the apex openre.stream server block that proxies to the API');
+    const metrics = apex.search(/^\s*location\s+=\s+\/metrics\s*\{\s*return\s+404;\s*\}/m);
+    const catchAll = apex.search(/^\s*location\s+\/\s*\{/m);
+    assert.ok(metrics >= 0, 'location = /metrics { return 404; } is present');
+    assert.ok(catchAll >= 0, 'the catch-all location / is present');
+    assert.ok(metrics < catchAll, 'the metrics block comes before the catch-all');
+});
