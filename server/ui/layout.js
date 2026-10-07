@@ -34,7 +34,9 @@ main.ore{max-width:1040px;margin:0 auto;padding:24px 16px 64px}
 @media (max-width:640px){.ore th:nth-child(n+4),.ore td:nth-child(n+4){display:none}}
 `;
 
-function renderPage({ title, body, user, canonicalPath = '/', robots = 'noindex,nofollow', config }) {
+const DESCRIPTION = 'OpenRe.Stream: stream definitions, ingest keys, sessions and restream outputs for the OpenVibe network.';
+
+function renderPage({ title, body, user, canonicalPath = '/', robots = 'noindex,nofollow', config, description = DESCRIPTION, styles = [] }) {
     const pageTitle = title ? `${title} · ${SITE}` : `${SITE} — ingest and restream for OpenVibe`;
     const nav = {
         service: 'openre',
@@ -60,12 +62,13 @@ function renderPage({ title, body, user, canonicalPath = '/', robots = 'noindex,
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(pageTitle)}</title>
-<meta name="description" content="OpenRe.Stream: stream definitions, ingest keys, sessions and restream outputs for the OpenVibe network.">
+<meta name="description" content="${esc(description)}">
 <meta name="robots" content="${esc(robots)}">
 <link rel="canonical" href="${esc(config.baseUrl + canonicalPath)}">
 ${icon}
 <script src="${ovServe.url('theme-loader.js')}" defer></script>
 <style>${CSS}</style>
+${styles.map((name) => `<link rel="stylesheet" href="${esc(ovServe.url(name))}">`).join('\n')}
 <script src="${ovServe.url('navbar.js')}" defer></script>
 <script src="${ovServe.url('footer.js')}" defer></script>
 </head>
