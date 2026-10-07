@@ -32,18 +32,18 @@ function createDiscoveryRoutes({ config }) {
     router.get('/llms.txt', (_req, res) => res.type('text/plain').set('Cache-Control', cache.htmlHeaders()).send(
         seo.llmsTxt({
             name: 'OpenRe.Stream',
-            summary: 'Live ingest and restream for the OpenVibe network. Go live from a browser over WHIP (WebRTC) with no OBS or encoder install, or publish with an RTMP encoder such as OBS or an ffmpeg MPEG-TS (JSMPEG) feed; OpenRe carries the session and restreams it to RTMP, RTMPS and SRT destinations.',
+            summary: 'Go live from your browser with no OBS and no follower minimum: on the OpenVibe network you open openvibe.live, press Go Live and allow your camera. OpenRe.Stream is the network\'s ingest and restream service behind it: it takes an RTMP feed from an encoder such as OBS and restreams the session to RTMP and SRT destinations.',
             details: [
-                'OpenRe.Stream is the ingest and restream authority behind OpenVibe.Live: channels, discovery and watch pages stay on openvibe.live, which plays an OpenRe session from its playback descriptor. OpenRe itself serves a JSON/REST API and a small server-rendered owner UI at openre.stream.',
+                'OpenRe.Stream is the ingest and restream authority behind OpenVibe.Live: channels, discovery and watch pages stay on openvibe.live. OpenRe itself serves a JSON/REST API and a small server-rendered owner UI at openre.stream. The service is alpha.',
                 '',
-                'Ingest options, as the code and README describe them today:',
-                '- Browser WebRTC (WHIP, RFC 9725): POST /whip/<key> on ingest.openre.stream, one mediasoup router per session and WebSocket viewer signaling at /w/<session id>. The /b/<key> broadcaster signaling endpoint is what the OpenVibe.Live broadcast page speaks, so a streamer can go live from a browser without OBS.',
-                '- RTMP: any RTMP encoder, e.g. OBS, to rtmp://ingest.openre.stream:1936/live with the stream key shown once when the stream is created.',
-                '- JSMPEG: an ffmpeg MPEG-TS HTTP POST to ingest.openre.stream:9736/<key>/<width>/<height>/ with WebSocket viewers; JSMPEG sessions are not recorded.',
+                'Going live, as it runs today:',
+                '- From a browser, with nothing to install: on OpenVibe.Live (https://openvibe.live, the Go Live button; guide at https://openvibe.live/docs/go-live-in-your-browser). There is no follower, subscriber or eligibility threshold.',
+                '- With an encoder such as OBS: RTMP to rtmp://ingest.openre.stream:1936/live with the stream key OpenRe shows once when the stream is created. Any signed-in OpenVibe account can create a stream.',
+                '- Browser WebRTC (WHIP, RFC 9725) and JSMPEG ingest are ported to OpenRe and tested, but their workers do not run in production yet; until they do, OpenVibe.Live serves them.',
                 '',
-                'Restream: a session can fan out to RTMP, RTMPS and SRT destinations (Twitch, YouTube, Kick or a custom server) with per-output health, logs, backoff and a rapid-crash circuit breaker. Recording: OpenRe asks OpenVibe.Media to record a VOD or clips for RTMP and WebRTC sessions (not JSMPEG). Playback: a live, non-private session is served as HTTP-FLV at https://openre.stream/play/<session id>.flv.',
+                'Restream: a session can fan out to several RTMP and SRT destinations at once, with per-output health, logs, backoff and a rapid-crash circuit breaker. Recording: OpenRe asks OpenVibe.Media to record a VOD or clips of an RTMP session. Playback: a live, non-private session is served as HTTP-FLV at https://openre.stream/play/<session id>.flv.',
                 '',
-                'Ingest keys are random, stored only as a SHA-256 hash and shown once at creation or rotation. There is no follower minimum or eligibility threshold to go live: a signed-in OpenVibe account can create a stream. The service is alpha.',
+                'Ingest keys are random, stored only as a SHA-256 hash and shown once at creation or rotation.',
             ].join('\n'),
             sections: [
                 { title: 'Start here', links: [

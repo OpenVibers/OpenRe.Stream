@@ -8,7 +8,7 @@
   "port": 4500,
   "rtmpPort": 1936,
   "domain": "openre.stream",
-  "contracts": "openvibe-contracts v0.76.0 (openvibe-sdk v0.26.0, openvibe-shared v2.5.0)",
+  "contracts": "openvibe-contracts v0.76.0 (openvibe-sdk v0.26.0, openvibe-shared v2.10.1)",
   "protocols": {
     "rtmp": "ingest ported (openre-rtmp-ingest)",
     "restream": "RTMP source to RTMP/RTMPS/SRT destinations ported (openre-restream-worker)",
@@ -28,7 +28,7 @@
   "livePatch": "applied in Live f0ca18b and deployed; Live wired on 2026-09-23 (OPENRE_URL and the openre.session.* subscription, docs/cutover.md phase A); every Live slot keeps ingest_authority=live until its per-slot cutover (phase B), so no broadcaster uses OpenRe yet",
   "deployed": true,
   "deployment": "Deployed with `sudo ovhost deploy openre` (OpenVibe.Host strategy release-layout since the 2026-09-27 cutover; deploy/scripts/deploy.sh is the wrapper and keeps workers/status/prune): API + coordinator on 127.0.0.1:4500, RTMP ingest public on 0.0.0.0:1936 (ingest.openre.stream, DNS-only; reachable from outside since 2026-09-23), Live wired (OPENRE_URL, openre.session.* subscription), preflight all PASS, restore drill passed. No slot switched yet: every slot is still ingested by Live until the per-slot cutover (docs/cutover.md phase B).",
-  "updated": "2026-09-28",
+  "updated": "2026-10-07",
   "features": [
     "stream definitions owned by a Network subject, with typed references",
     "ingest keys hashed at rest, shown once, rotation with grace",

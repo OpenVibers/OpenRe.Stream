@@ -16,6 +16,7 @@
 const crypto = require('crypto');
 const ovServe = require('openvibe-shared/serve');
 const frame = require('openvibe-shared/frame');
+const showcase = require('openvibe-shared/showcase');
 const express = require('express');
 const { renderPage, esc } = require('./layout');
 const { StoreError } = require('../store/definitions');
@@ -87,14 +88,49 @@ function createUiRouter({ rt, auth }) {
         const signedIn = req.caller.kind === 'user' && req.caller.subject;
         const mine = signedIn ? await store.definitions.list({ owner_subject: req.caller.subject }) : [];
         page(req, res, {
-            canonicalPath: '/', robots: 'index,follow',
-            body: `<h1>OpenRe.Stream</h1>
-<p>Ingest and restream for the OpenVibe network: stream definitions with hashed ingest keys, RTMP ingest sessions that run in transport workers separate from any web deploy, restream outputs with health and logs, and recording requests to OpenVibe.Media.</p>
-<p class="muted">Status: alpha. RTMP ingest and RTMP/SRT restreaming work here; WHIP, WebRTC/SFU and JSMPEG are still served by OpenVibe.Live. Channels, discovery and watch pages stay on <a href="${esc(config.liveUrl)}">openvibe.live</a>.</p>
+            canonicalPath: '/', robots: 'index,follow', styles: [showcase.STYLESHEET],
+            description: 'Go live from your browser with no OBS and no follower minimum on OpenVibe.Live, or restream an OBS feed to your other channels with OpenRe.Stream.',
+            body: `${frontPage(config)}
 ${signedIn ? `<h2>Your streams</h2>${mine.length ? await streamTable(mine) : '<p class="muted">No streams yet.</p>'}<p><a href="/streams">Manage streams</a></p>` : '<p><a href="/auth/login?next=/streams">Sign in with OpenVibe</a> to manage your streams.</p>'}
 ${frame.shipped({ service: 'openre', title: 'Recently shipped on OpenRe.Stream' })}`,
         });
     });
+
+    /**
+     * The front page (openvibe-shared/showcase). It leads with going live from a browser, which today happens on
+     * OpenVibe.Live; it states that only RTMP ingest and RTMP/SRT restreaming run here, and that WHIP and JSMPEG
+     * are still Live's (the WebRTC and JSMPEG workers are ported but not deployed).
+     */
+    function frontPage(cfg) {
+        const live = cfg.liveUrl;
+        return showcase.hero({
+            eyebrow: 'OpenRe.Stream · alpha',
+            title: 'Go live from your browser.', accent: 'No OBS, no follower minimum.',
+            lede: 'Open OpenVibe.Live, press Go Live and allow your camera: nothing to install, and no follower or subscriber threshold. OpenRe.Stream is the ingest and restream service behind it. With an encoder such as OBS, it takes your RTMP feed and sends the session on to your other channels.',
+            actions: [
+                { label: 'Go live in your browser', href: live, primary: true },
+                { label: 'Restream with OBS', href: '/streams' },
+                { label: 'Read the guide', href: `${live}/docs/go-live-in-your-browser` },
+            ],
+            note: 'Alpha. RTMP ingest and RTMP/SRT restreaming run here today; browser (WHIP) and JSMPEG ingest are still served by OpenVibe.Live. Channels, discovery and watch pages stay on openvibe.live.',
+        }) + showcase.features({
+            title: 'What OpenRe does',
+            items: [
+                { icon: 'ov:stream', title: 'Ingest keys you control', text: 'Create a stream and get its RTMP server and key. The key is shown once, stored only as a hash, and can be rotated any time.' },
+                { icon: 'ov:live', title: 'One stream, several channels', text: 'Send a session to several RTMP or SRT destinations at once, each with its own health, logs and retry with backoff.' },
+                { icon: 'ov:video', title: 'Recording', text: 'Per stream: record a VOD, keep clips only, or record nothing. OpenVibe.Media keeps the recordings.' },
+                { icon: 'ov:check', title: 'Nothing to qualify for', text: 'Any signed-in OpenVibe account can create a stream. There is no follower, subscriber or eligibility threshold.' },
+            ],
+        }) + showcase.steps({
+            title: 'Restream with OBS',
+            items: [
+                { title: 'Sign in', text: 'With your OpenVibe account.', href: '/auth/login?next=/streams' },
+                { title: 'Create a stream', text: 'Copy the RTMP server and the key; the key is shown only once.' },
+                { title: 'Add destinations', text: 'The server and key of each channel you also stream to. Test each one before you go live.' },
+                { title: 'Go live from OBS', text: 'Each destination shows its health and logs while you stream.' },
+            ],
+        });
+    }
 
     async function streamTable(list) {
         return `<table><tr><th>Stream</th><th>State</th><th>Now</th><th>Linked to</th></tr>${(await Promise.all(list.map(async (d) => {
