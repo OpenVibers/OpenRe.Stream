@@ -101,6 +101,18 @@ t('WHIP PATCH sdpfrag: credentials, candidates, end-of-candidates; malformed bod
     );
 });
 
+t('behind the TLS vhost (OPENRE_WEBRTC_PUBLIC_PORT=443) the viewer signaling URL is wss:// with no port', async () => {
+    const rt = await runtime({ dir: tmpDir(), env: { MEDIASOUP_ANNOUNCED_IP: '203.0.113.7', OPENRE_WEBRTC_PUBLIC_PORT: '443', OPENRE_WEBRTC_PUBLIC_HOST: 'ingest.openre.stream' } });
+    const { definition, key } = await rt.store.definitions.create({ owner_subject: OWNER, protocols: ['webrtc'] });
+    const w = await rt.store.workers.register({ kind: 'webrtc', endpoints: { publicPort: 9936, egressPort: 19810 } });
+    await rt.store.workers.ready(w.id);
+    const a = await rt.store.sessions.admit({ definition, key, protocol: 'webrtc', worker: await rt.store.workers.get(w.id) });
+    await rt.store.sessions.transition(a.session.id, 'live', { reason: 'media_flowing', actor: 'worker:w' });
+    const pb = await rt.store.sessions.playback(await rt.store.sessions.get(a.session.id));
+    // The worker listens on loopback 9936; nginx serves it on 443, which is what a browser must use.
+    assert.strictEqual(pb.webrtc.signaling_url, `wss://ingest.openre.stream/w/${a.session.id}`);
+});
+
 t('a webrtc session playback descriptor is { signaling_url, announced_ip } and carries thumbnail_url', async () => {
     const rt = await runtime({ dir: tmpDir(), env: { MEDIASOUP_ANNOUNCED_IP: '203.0.113.7' } });
     const { definition, key } = await rt.store.definitions.create({ owner_subject: OWNER, protocols: ['webrtc'] });
