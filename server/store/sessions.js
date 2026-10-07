@@ -234,9 +234,13 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
         }
         if (session.protocol === 'webrtc' && ep.publicPort) {
             // The viewer signaling endpoint, keyed by the session's playback id (never the key), and
-            // the mediasoup announced IP clients must be able to reach for media to flow.
+            // the mediasoup announced IP clients must be able to reach for media to flow. Behind the TLS
+            // vhost (OPENRE_WEBRTC_PUBLIC_PORT=443) it is wss:// with no port, as the WHIP and broadcaster
+            // URLs are (store/definitions.js); otherwise ws:// on the worker's own listen port.
+            const w = config.webrtc;
+            const tls = w.publicPort === 443;
             descriptor.webrtc = {
-                signaling_url: `ws://${config.webrtc.publicHost}:${ep.publicPort}/w/${session.id}`,
+                signaling_url: tls ? `wss://${w.publicHost}/w/${session.id}` : `ws://${w.publicHost}:${ep.publicPort}/w/${session.id}`,
                 announced_ip: config.webrtc.media.announcedIp || null,
             };
         }
