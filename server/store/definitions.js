@@ -170,6 +170,28 @@ function createDefinitions({ db, config, events, clock }) {
         return await row(id);
     }
 
+    /**
+     * Add one external ref to a definition (the Live slot OpenVibe Live gave it, say). Idempotent: a ref the
+     * definition already has changes nothing. Refused (409 openre.ref_taken) when another live definition holds it.
+     */
+    async function addRef(id, ref) {
+        const [r] = validateRefs([ref]);
+        return await db.tx(async () => {
+            const current = await get(id);
+            if (!current || current.state === 'archived') throw new StoreError(404, 'openre.stream_not_found', 'no such stream definition');
+            if (current.external_refs.some(x => x.service === r.service && x.type === r.type && x.id === r.id)) return current;
+            if (!SHARED_REF_TYPES.has(r.type)) {
+                const taken = await q.byRef.get(r.service, r.type, r.id);
+                if (taken && taken.definition_id !== id && (await row(taken.definition_id)).state !== 'archived') {
+                    throw new StoreError(409, 'openre.ref_taken', `${r.service}:${r.type}:${r.id} already belongs to another stream definition`);
+                }
+            }
+            await q.insertRef.run(id, r.service, r.type, r.id, r.label, now());
+            await db.prepare('UPDATE stream_definitions SET revision = revision + 1, updated_at = ? WHERE id = ?').run(now(), id);
+            return await get(id);
+        });
+    }
+
     async function archive(id) {
         const current = await get(id);
         if (!current || current.state === 'archived') throw new StoreError(404, 'openre.stream_not_found', 'no such stream definition');
@@ -288,7 +310,7 @@ function createDefinitions({ db, config, events, clock }) {
         return out;
     }
 
-    return { get, list, findByRef, create, update, archive, rotateKey, expireGraceKeys, keys, resolveIngestKey, ingestEndpoints, issueKey, row };
+    return { get, list, findByRef, create, update, addRef, archive, rotateKey, expireGraceKeys, keys, resolveIngestKey, ingestEndpoints, issueKey, row };
 }
 
 module.exports = { createDefinitions, StoreError, PROTOCOLS, RECORDING_MODES, VISIBILITIES, cleanText, parseJson, validateRefs };

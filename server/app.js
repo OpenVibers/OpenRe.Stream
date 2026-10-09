@@ -128,7 +128,9 @@ function createApp({ rt, auth, keys, log = console, fetchImpl }) {
     app.get('/api/ready', readiness.handler);
 
     const apiJson = express.json({ limit: '256kb', type: ['application/json', 'application/*+json'] });
-    const v1 = createV1Router({ rt, auth });
+    // OpenVibe Live on by default: a person's new stream also shows on their Live channel (server/live-link.js).
+    const liveLink = require('./live-link').createLiveLink({ store, config, fetchImpl, log });
+    const v1 = createV1Router({ rt, auth, liveLink });
     // Per-actor limits on a signed-in person's writes (server/api/actor-limits.js; roadmap WS-R task 4).
     const actorLimits = require('./api/actor-limits').createOpenReActorLimits({ registry: metrics.registry, valkey });
     app.use('/api/v1', apiJson, auth.middleware({ services: true }), actorLimits, v1.router);
@@ -155,7 +157,7 @@ function createApp({ rt, auth, keys, log = console, fetchImpl }) {
     app.use('/auth', createSsoRoutes({ config, auth, fetchImpl }));
     // Crawl and machine-readability artifacts (robots.txt, sitemap.xml, llms.txt): openvibe-shared/seo.
     app.use('/', createDiscoveryRoutes({ config }));
-    app.use('/', createUiRouter({ rt, auth, limits: actorLimits }));
+    app.use('/', createUiRouter({ rt, auth, limits: actorLimits, liveLink }));
 
     app.use((req, res) => contracts.http.sendProblem(res, 404, 'openre.not_found', { detail: `no route ${req.method} ${req.path}`, ctx: req.ov }));
     // eslint-disable-next-line no-unused-vars

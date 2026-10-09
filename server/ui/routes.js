@@ -23,11 +23,14 @@ const { StoreError } = require('../store/definitions');
 const { testDestination } = require('../destination-test');
 
 const iso = (ms) => (ms ? new Date(ms).toISOString().replace('T', ' ').slice(0, 19) + ' UTC' : '—');
+const { REASONS: LIVE_REASONS } = require('../live-link');
+// A channel URL comes from Live's answer; only an http(s) URL becomes a link.
+const httpUrl = (u) => (/^https?:\/\/[^\s"'<>]+$/.test(String(u || '')) ? String(u) : null);
 const pill = (state) => `<span class="pill ${esc(state)}">${esc(state)}</span>`;
 
 function csrfFor(token) { return crypto.createHash('sha256').update(`openre-csrf:${token}`).digest('hex').slice(0, 32); }
 
-function createUiRouter({ rt, auth, limits = null }) {
+function createUiRouter({ rt, auth, limits = null, liveLink = null }) {
     const { store, config } = rt;
     const router = express.Router();
     router.use(express.urlencoded({ extended: false, limit: '64kb' }));
@@ -91,7 +94,7 @@ function createUiRouter({ rt, auth, limits = null }) {
         const mine = signedIn ? await store.definitions.list({ owner_subject: req.caller.subject }) : [];
         page(req, res, {
             canonicalPath: '/', robots: 'index,follow', styles: [showcase.STYLESHEET],
-            description: 'Go live from your browser with no OBS and no follower minimum on OpenVibe.Live, or restream an OBS feed to your other channels with OpenRestream.',
+            description: 'OpenRestream: open restreaming. Go live once from OBS and stream to Twitch, YouTube, Kick and any RTMP or SRT server at the same time, with OpenVibe Live on by default. Free, open source, no follower minimum.',
             body: `${frontPage(config)}
 ${signedIn ? `<h2>Your streams</h2>${mine.length ? await streamTable(mine) : '<p class="muted">No streams yet.</p>'}<p><a href="/streams">Manage streams</a></p>` : '<p><a href="/auth/login?next=/streams">Sign in with OpenVibe</a> to manage your streams.</p>'}
 ${frame.shipped({ service: 'openre', title: 'Recently shipped on OpenRestream' })}`,
@@ -99,37 +102,37 @@ ${frame.shipped({ service: 'openre', title: 'Recently shipped on OpenRestream' }
     });
 
     /**
-     * The front page (openvibe-shared/showcase). It leads with going live from a browser, which today happens on
-     * OpenVibe.Live; it states that only RTMP ingest and RTMP/SRT restreaming run here, and that WHIP and JSMPEG
-     * are still Live's (the WebRTC and JSMPEG workers are ported but not deployed).
+     * The front page (openvibe-shared/showcase). OpenRestream is an open restreaming platform with OpenVibe Live on by
+     * default (owner, 2026-10-09). It says that RTMP ingest and RTMP/RTMPS/SRT restreaming run here, and that going live
+     * from a browser happens on OpenVibe.Live for now (the WebRTC and JSMPEG workers are ported but not deployed).
      */
     function frontPage(cfg) {
         const live = cfg.liveUrl;
         return showcase.hero({
-            eyebrow: 'OpenRestream · alpha',
-            title: 'Go live from your browser.', accent: 'No OBS, no follower minimum.',
-            lede: 'Open OpenVibe.Live, press Go Live and allow your camera: nothing to install, and no follower or subscriber threshold. OpenRestream is the ingest and restream service behind it. With an encoder such as OBS, it takes your RTMP feed and sends the session on to your other channels.',
+            eyebrow: 'OpenRestream · open restreaming',
+            title: 'Go live once.', accent: 'Stream everywhere.',
+            lede: 'Send one stream from OBS or any RTMP encoder, and OpenRestream sends it to Twitch, YouTube, Kick and any RTMP, RTMPS or SRT server at the same time. Your OpenVibe Live channel is on by default, with chat, clips and VODs. It is free and open source, with no follower minimum.',
             actions: [
-                { label: 'Go live in your browser', href: live, primary: true },
-                { label: 'Restream with OBS', href: '/streams' },
-                { label: 'Read the guide', href: `${live}/docs/go-live-in-your-browser` },
+                { label: 'Start restreaming', href: '/streams', primary: true },
+                { label: 'No OBS? Go live from your browser', href: live },
+                { label: 'How browser streaming works', href: `${live}/docs/go-live-in-your-browser` },
             ],
-            note: 'Alpha. RTMP ingest and RTMP/SRT restreaming run here today; browser (WHIP) and JSMPEG ingest are still served by OpenVibe.Live. Channels, discovery and watch pages stay on openvibe.live.',
+            note: 'Alpha. RTMP ingest and RTMP, RTMPS and SRT restreaming run here. Going live from a browser happens on OpenVibe.Live for now.',
         }) + showcase.features({
             title: 'What OpenRestream does',
             items: [
-                { icon: 'ov:stream', title: 'Ingest keys you control', text: 'Create a stream and get its RTMP server and key. The key is shown once, stored only as a hash, and can be rotated any time.' },
-                { icon: 'ov:live', title: 'One stream, several channels', text: 'Send a session to several RTMP or SRT destinations at once, each with its own health, logs and retry with backoff.' },
-                { icon: 'ov:video', title: 'Recording', text: 'Per stream: record a VOD, keep clips only, or record nothing. OpenVibe.Media keeps the recordings.' },
-                { icon: 'ov:check', title: 'Nothing to qualify for', text: 'Any signed-in OpenVibe account can create a stream. There is no follower, subscriber or eligibility threshold.' },
+                { icon: 'ov:live', title: 'One stream, every platform', text: 'Twitch, YouTube, Kick and any RTMP, RTMPS or SRT server at once. Each destination has its own health, logs and retries.' },
+                { icon: 'ov:stream', title: 'OpenVibe Live on by default', text: 'Every stream also goes live on your openvibe.live channel, with chat, clips and VODs. Switch it off for any stream.' },
+                { icon: 'ov:check', title: 'Keys you control', text: 'Each stream has its own RTMP key, shown once and stored only as a hash. Rotate it any time.' },
+                { icon: 'ov:video', title: 'Free, open, no minimum', text: 'Any OpenVibe account can restream from the first minute: no follower, subscriber or eligibility threshold, and the code is on GitHub.' },
             ],
         }) + showcase.steps({
             title: 'Restream with OBS',
             items: [
                 { title: 'Sign in', text: 'With your OpenVibe account.', href: '/auth/login?next=/streams' },
-                { title: 'Create a stream', text: 'Copy the RTMP server and the key; the key is shown only once.' },
-                { title: 'Add destinations', text: 'The server and key of each channel you also stream to. Test each one before you go live.' },
-                { title: 'Go live from OBS', text: 'Each destination shows its health and logs while you stream.' },
+                { title: 'Create a stream', text: 'Copy the RTMP server and key; the key is shown only once. OpenVibe Live is already ticked.' },
+                { title: 'Add destinations', text: 'The server and key of each platform you also stream to. Test each one before you go live.' },
+                { title: 'Go live from OBS', text: 'Every destination, and your OpenVibe Live channel, shows its health while you stream.' },
             ],
         });
     }
@@ -152,11 +155,19 @@ ${frame.shipped({ service: 'openre', title: 'Recently shipped on OpenRestream' }
 <label>Title</label><input type="text" name="title" maxlength="140" required>
 <div class="row"><div><label>Recording</label><select name="recording_mode"><option value="vod">Record a VOD</option><option value="clips">Clips only</option><option value="none">Do not record</option></select></div>
 <div><label>Recording visibility</label><select name="recording_visibility"><option>public</option><option>unlisted</option><option>private</option></select></div></div>
+<label><input type="checkbox" name="show_on_live" value="1" checked> Show it live on my OpenVibe Live channel too</label>
 <button type="submit">Create stream</button><p class="muted">The ingest key is shown once, on the next page.</p>`)}</div>`,
         });
     });
 
-    async function keyPage(req, res, definition, key, heading) {
+    /** Where the stream shows on OpenVibe Live, or why it does not (the outcome of liveLink.link). */
+    function liveNote(live) {
+        if (!live) return '';
+        if (live.linked) return `<div class="card"><p><strong>OpenVibe Live is on.</strong> When you go live, this stream also shows on ${httpUrl(live.channel_url) ? `<a href="${esc(live.channel_url)}">${esc(live.channel_url.replace(/^https?:\/\//, ''))}</a>` : 'your OpenVibe Live channel'}, with chat, clips and VODs. Switch it off in the stream's settings.</p></div>`;
+        return `<div class="flash bad">${esc(live.reason || 'OpenVibe Live did not link this stream.')}</div>`;
+    }
+
+    async function keyPage(req, res, definition, key, heading, live = null) {
         const ep = await store.definitions.ingestEndpoints(definition);
         res.set('Cache-Control', 'no-store');
         page(req, res, {
@@ -165,6 +176,7 @@ ${frame.shipped({ service: 'openre', title: 'Recently shipped on OpenRestream' }
 <div class="card"><p><strong>Copy the key now.</strong> OpenRestream stores only a hash of it; this page is the only time it is shown.</p>
 <label>Server (OBS: Settings → Stream → Custom)</label><code class="secret">${esc(ep.rtmp ? ep.rtmp.url : '')}</code>
 <label>Stream key</label><code class="secret">${esc(key.key)}</code></div>
+${liveNote(live)}
 <p><a href="/streams/${esc(definition.id)}">Continue to the stream</a></p>`,
         });
     }
@@ -175,7 +187,9 @@ ${frame.shipped({ service: 'openre', title: 'Recently shipped on OpenRestream' }
             owner_subject: req.caller.subject, title: b.title, recording_mode: b.recording_mode,
             recording_visibility: b.recording_visibility, created_by: req.caller.subject,
         });
-        await keyPage(req, res, definition, key, 'Stream created');
+        // OpenVibe Live on by default: the box is ticked on the form, unticking it opts out.
+        const live = liveLink && b.show_on_live === '1' ? await liveLink.link(await store.definitions.get(definition.id)) : null;
+        await keyPage(req, res, definition, key, 'Stream created', live);
     });
 
     router.get('/streams/:id', async (req, res) => {
@@ -193,6 +207,7 @@ ${frame.shipped({ service: 'openre', title: 'Recently shipped on OpenRestream' }
             title: d.title, canonicalPath: `/streams/${d.id}`,
             body: `<h1>${esc(d.title)} ${pill(d.state)}</h1>
 <p class="muted mono">${esc(d.id)}${d.external_refs.length ? ` · linked to ${esc(d.external_refs.map(r => `${r.service}:${r.type}:${r.id}`).join(', '))}` : ''}</p>
+${liveStatus(d, req.query.live)}
 <div class="card"><h2>Ingest</h2>
 ${ep.rtmp ? `<label>RTMP server</label><code class="secret">${esc(ep.rtmp.url)}</code>` : '<p class="muted">RTMP is not enabled for this stream.</p>'}
 <table><tr><th>Key</th><th>Status</th><th>Created</th><th>Last used</th></tr>${keys.map(k => `<tr><td class="mono">ork_…${esc(k.hint)}</td><td>${pill(k.status)}${k.grace_until ? ` until ${esc(iso(k.grace_until))}` : ''}</td><td>${esc(iso(k.created_at))}</td><td>${esc(iso(k.last_used_at))}</td></tr>`).join('') || '<tr><td colspan="4">No usable key: rotate to get one.</td></tr>'}</table>
@@ -217,11 +232,20 @@ ${dests.length ? `<table><tr><th>Destination</th><th>Output</th><th>Health</th><
 <div><label>Recording visibility</label><select name="recording_visibility">${['public', 'unlisted', 'private'].map(m => `<option${d.recording_visibility === m ? ' selected' : ''}>${m}</option>`).join('')}</select></div>
 <div><label>Playback</label><select name="playback_visibility">${['public', 'unlisted', 'private'].map(m => `<option${d.playback_visibility === m ? ' selected' : ''}>${m}</option>`).join('')}</select></div>
 <div><label>State</label><select name="state">${['active', 'disabled'].map(m => `<option${d.state === m ? ' selected' : ''}>${m}</option>`).join('')}</select></div></div>
-<label><input type="checkbox" name="mirror_to_live" value="1"${d.mirror_to_live ? ' checked' : ''}> Mirror sessions into my OpenVibe.Live channel (consent; Live also has to switch this slot to OpenRestream)</label>
+<label><input type="checkbox" name="mirror_to_live" value="1"${d.mirror_to_live ? ' checked' : ''}> Show it live on my OpenVibe Live channel too</label>
 <button type="submit">Save</button>`)}</div>
 <h2>Sessions</h2>${sessionTable(sessions)}`,
         });
     });
+
+    /** The stream page's OpenVibe Live line: where it shows, that it is off, or why switching it on failed. */
+    function liveStatus(d, failed) {
+        const slot = liveLink ? liveLink.slotOf(d) : null;
+        const reason = failed && LIVE_REASONS[failed];
+        const flash = failed ? `<div class="flash bad">${esc(reason || 'OpenVibe Live did not link this stream.')}</div>` : '';
+        if (d.mirror_to_live && slot) return `${flash}<p><span class="pill live">on</span> OpenVibe Live: sessions show on ${httpUrl(slot.label) ? `<a href="${esc(slot.label)}">${esc(String(slot.label).replace(/^https?:\/\//, ''))}</a>` : 'your OpenVibe Live channel'}.</p>`;
+        return `${flash}<p class="muted">OpenVibe Live is off for this stream: switch it on in Settings.</p>`;
+    }
 
     function destinationFields(x) {
         const sel = (name, opts, cur) => `<select name="${name}">${opts.map(o => `<option${o === cur ? ' selected' : ''}>${o}</option>`).join('')}</select>`;
@@ -257,7 +281,13 @@ ${dests.length ? `<table><tr><th>Destination</th><th>Output</th><th>Health</th><
         const d = await ownDefinition(req, res, req.params.id);
         if (!d) return;
         const b = req.body || {};
-        await store.definitions.update(d.id, { title: b.title, recording_mode: b.recording_mode, recording_visibility: b.recording_visibility, playback_visibility: b.playback_visibility, state: b.state, mirror_to_live: b.mirror_to_live === '1' });
+        const want = b.mirror_to_live === '1';
+        await store.definitions.update(d.id, { title: b.title, recording_mode: b.recording_mode, recording_visibility: b.recording_visibility, playback_visibility: b.playback_visibility, state: b.state, mirror_to_live: want && liveLink ? undefined : want });
+        if (want && liveLink) {
+            // Switching it on gets the Live slot first; refused, it stays off and the page says why.
+            const r = await liveLink.link(await store.definitions.get(d.id));
+            if (!r.linked) return res.redirect(303, `/streams/${d.id}?live=${encodeURIComponent(r.code)}`);
+        }
         res.redirect(303, `/streams/${d.id}`);
     });
 

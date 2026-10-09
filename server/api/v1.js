@@ -32,7 +32,7 @@ const { testDestination } = require('../destination-test');
 
 function iso(ms) { return ms ? new Date(ms).toISOString() : null; }
 
-function createV1Router({ rt, auth }) {
+function createV1Router({ rt, auth, liveLink = null }) {
     const { store, config } = rt;
     const router = express.Router();
     const guard = auth.guard;
@@ -161,8 +161,13 @@ function createV1Router({ rt, auth }) {
             mirror_to_live: b.mirror_to_live, external_refs: b.external_refs,
             created_by: auth.actorOf(req.caller),
         });
+        // OpenVibe Live on by default for a person's own stream (show_on_live: false opts out). A service names its
+        // own refs (Live's slots, Bot's robots), so it is never linked here.
+        let live = null;
+        if (liveLink && req.caller.kind === 'user' && b.show_on_live !== false) live = await liveLink.link(await store.definitions.get(definition.id));
         res.set('Cache-Control', 'no-store');
-        return res.status(201).json({ stream: await publicDefinition(definition), key: { id: key.id, key: key.key, hint: key.hint, shown_once: true } });
+        const current = live ? await store.definitions.get(definition.id) : definition;
+        return res.status(201).json({ stream: await publicDefinition(current), key: { id: key.id, key: key.key, hint: key.hint, shown_once: true }, ...(live ? { live } : {}) });
     }));
 
     router.get('/streams/:id', guard('openre.stream.read'), handle(async (req, res) => {
@@ -174,11 +179,15 @@ function createV1Router({ rt, auth }) {
         const d = await loadDefinition(req, res, req.params.id);
         if (!d) return;
         const b = req.body || {};
-        const updated = await store.definitions.update(d.id, {
+        // A person switching mirror_to_live on gets their Live slot first (it stays off, with the reason, when Live refuses).
+        const linkNow = liveLink && req.caller.kind === 'user' && b.mirror_to_live === true && !liveLink.slotOf(d);
+        let updated = await store.definitions.update(d.id, {
             title: b.title, description: b.description, protocols: b.protocols, recording_mode: b.recording_mode,
-            recording_visibility: b.recording_visibility, playback_visibility: b.playback_visibility, mirror_to_live: b.mirror_to_live, state: b.state,
+            recording_visibility: b.recording_visibility, playback_visibility: b.playback_visibility, mirror_to_live: linkNow ? undefined : b.mirror_to_live, state: b.state,
         });
-        res.json({ stream: await publicDefinition(updated) });
+        let live = null;
+        if (linkNow) { live = await liveLink.link(await store.definitions.get(d.id)); updated = await store.definitions.get(d.id); }
+        res.json({ stream: await publicDefinition(updated), ...(live ? { live } : {}) });
     }));
 
     router.delete('/streams/:id', guard('openre.stream.write'), handle(async (req, res) => {
