@@ -34,10 +34,10 @@ main.ore{max-width:1040px;margin:0 auto;padding:24px 16px 64px}
 @media (max-width:640px){.ore th:nth-child(n+4),.ore td:nth-child(n+4){display:none}}
 `;
 
-const DESCRIPTION = 'OpenRestream: stream definitions, ingest keys, sessions and restream outputs for the OpenVibe network.';
+const DESCRIPTION = 'OpenRestream: open restreaming. Go live once from OBS and stream to Twitch, YouTube, Kick and any RTMP or SRT server at the same time, with OpenVibe Live on by default. Free and open source.';
 
 function renderPage({ title, body, user, canonicalPath = '/', robots = 'noindex,nofollow', config, description = DESCRIPTION, styles = [] }) {
-    const pageTitle = title ? `${title} · ${SITE}` : `${SITE} — ingest and restream for OpenVibe`;
+    const pageTitle = title ? `${title} · ${SITE}` : `${SITE} — go live once, stream everywhere`;
     const nav = {
         service: 'openre',
         apiBase: NETWORK_URL,

@@ -32,9 +32,11 @@ function createDiscoveryRoutes({ config }) {
     router.get('/llms.txt', (_req, res) => res.type('text/plain').set('Cache-Control', cache.htmlHeaders()).send(
         seo.llmsTxt({
             name: 'OpenRestream',
-            summary: 'Go live from your browser with no OBS and no follower minimum: on the OpenVibe network you open openvibe.live, press Go Live and allow your camera. OpenRestream is the network\'s ingest and restream service behind it: it takes an RTMP feed from an encoder such as OBS and restreams the session to RTMP and SRT destinations.',
+            summary: 'OpenRestream (openre.stream) is an open restreaming platform: send one stream from OBS or any RTMP encoder and it goes to Twitch, YouTube, Kick and any RTMP, RTMPS or SRT server at the same time, with the person\'s OpenVibe Live channel on by default. It is free and open source, with no follower minimum. With no OBS, people go live from their browser on OpenVibe.Live (openvibe.live, the Go Live button).',
             details: [
-                'OpenRestream is the ingest and restream authority behind OpenVibe.Live: channels, discovery and watch pages stay on openvibe.live. OpenRestream itself serves a JSON/REST API and a small server-rendered owner UI at openre.stream. The service is alpha.',
+                'OpenRestream is also the ingest and restream engine of the OpenVibe network. It serves a JSON/REST API and server-rendered pages at openre.stream (sign in, streams, keys, destinations, sessions). Channels, chat, discovery and watch pages are on openvibe.live. The service is alpha.',
+                '',
+                'OpenVibe Live on by default: a stream someone creates on openre.stream also goes live on their openvibe.live channel (its own slot there, managed on OpenRestream), with chat, clips and VODs. It can be switched off for any stream; the other destinations keep working. A person needs an OpenVibe Live account, made by signing in to openvibe.live once.',
                 '',
                 'Going live, as it runs today:',
                 '- From a browser, with nothing to install: on OpenVibe.Live (https://openvibe.live, the Go Live button; guide at https://openvibe.live/docs/go-live-in-your-browser). There is no follower, subscriber or eligibility threshold.',

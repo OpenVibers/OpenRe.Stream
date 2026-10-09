@@ -1,6 +1,8 @@
 # OpenRestream
 
-> Ingest and restream: stream definitions, keys, sessions, transport workers, outputs and output health.
+> Open restreaming at openre.stream: go live once from OBS or any RTMP encoder and stream to Twitch, YouTube, Kick and
+> any RTMP, RTMPS or SRT server at the same time, with OpenVibe Live on by default. Underneath: stream definitions,
+> keys, sessions, transport workers, outputs and output health.
 
 **Status:** alpha (roadmap Wave 7). Tested end to end with real RTMP. Deployed internally on `openvibe-ovh` since 2026-09-23 (API and coordinator on 127.0.0.1:4500; RTMP ingest public on port 1936 at `ingest.openre.stream` since the cutover runbook's phase A on 2026-09-23; Live wired with `OPENRE_URL` and an `openre.session.*` subscription; one rehearsal broadcast passed). **openre.stream serves its own site since 2026-10-09** (plan T11, cutover step B0 (a)): sign in with OpenVibe, create a stream with its RTMP key, and send it to other channels. No Live slot is ingested here yet: every slot is still ingested by Live until its per-slot cutover (`docs/cutover.md` phase B).
 **Domain:** `openre.stream` (UI + API), `ingest.openre.stream` (RTMP, DNS only)
@@ -198,6 +200,25 @@ sudo deploy/scripts/deploy.sh status                # deploy-legacy.sh
   openre`). Workers roll back by starting the previous generation (`deploy.sh workers <sha>`); the
   coordinator drains the newer one. The schema code only adds, so an older release reads a newer database.
 - First install: create the `openre` OAuth client and grants in Network, `/etc/openvibe/openre.env` (0600), the certificate for `openre.stream`, DNS for `openre.stream` (proxied) and `ingest.openre.stream` (DNS only), firewall 1936/tcp, then `release`, `api`, `workers`, and `systemctl enable --now openre-api openre-session-coordinator`.
+
+## OpenVibe Live on by default
+
+A stream someone creates on openre.stream also goes live on their OpenVibe Live channel unless they untick "Show it
+live on my OpenVibe Live channel too" (the create form, ticked by default; the API's `show_on_live: false` for a
+person's own stream; services such as Live and Bot name their own refs and are never linked). `server/live-link.js`
+asks Live for a slot on the owner's channel bound to the stream (`POST /internal/openre/slots` on Live, capability
+`live.openre.slot.bind`, contracts 0.126.0, with this service's Network token for audience `openvibe.live`). The slot
+becomes the stream's `live:managed_stream` ref (its label is the channel URL) and `mirror_to_live` turns on, so Live's
+mirror makes each session a live stream on `openvibe.live/@username`, with chat, clips and VODs.
+
+- **Refusals** keep the stream with Live off and say why on the page:
+  - `live.no_account`: the person signs in to openvibe.live once;
+  - `live.slot_limit`: their Live slots are full;
+  - `live.slot_taken`, `live.account_banned`, or Live unreachable.
+- **Switching it off** in Settings stops the mirror; the slot stays recorded, so switching it on again needs no new slot.
+- **Config:** `OV_LIVE_INTERNAL_URL` (default `http://127.0.0.1:3000`). `OPENRE_LIVE_LINK=off` turns linking off, and
+  it is off in a restore drill and without `OV_OAUTH_CLIENT_SECRET`.
+- **Test:** `test/live-link.test.js`.
 
 ## Live integration (patch)
 
