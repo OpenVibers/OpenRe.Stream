@@ -4,9 +4,9 @@
     "openvibe-contracts": ">=0.13.0 <1.0.0"
   },
   "id": "openre",
-  "name": "OpenRe.Stream",
+  "name": "OpenRestream",
   "status": "alpha",
-  "repository": "OpenVibers/OpenRe.Stream",
+  "repository": "OpenVibers/OpenRestream",
   "domains": [
     "openre.stream",
     "ingest.openre.stream"

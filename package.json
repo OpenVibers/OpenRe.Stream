@@ -2,7 +2,7 @@
   "name": "openre-stream",
   "version": "0.1.0",
   "private": true,
-  "description": "OpenRe.Stream: ingest and restream authority for the OpenVibe network. Stream definitions, hashed ingest keys, ingest sessions, transport workers with generations and leases, restream outputs with health and logs, recording requests to OpenVibe.Media.",
+  "description": "OpenRestream: ingest and restream authority for the OpenVibe network. Stream definitions, hashed ingest keys, ingest sessions, transport workers with generations and leases, restream outputs with health and logs, recording requests to OpenVibe.Media.",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
@@ -23,7 +23,7 @@
   ],
   "author": "OpenVibers",
   "license": "AGPL-3.0-only",
-  "repository": "github:OpenVibers/OpenRe.Stream",
+  "repository": "github:OpenVibers/OpenRestream",
   "dependencies": {
     "better-sqlite3": "^11.10.0",
     "cookie-parser": "^1.4.7",

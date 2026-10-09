@@ -7,7 +7,7 @@ index 5b3d8ac..b30f33b 100644
  # OAuth client above (grant events.event.publish). Unset = off. EVENTS_PUBLISH=off also disables it.
  #EVENTS_URL=http://127.0.0.1:4300
 +
-+# OpenRe.Stream (roadmap Wave 7): the ingest/restream authority. Unset = off, and every stream slot
++# OpenRestream (roadmap Wave 7): the ingest/restream authority. Unset = off, and every stream slot
 +# is ingested by Live exactly as before. When set, an admin can switch one slot at a time
 +# (PUT /api/admin/openre/managed/:id/ingest-authority); only RTMP moves. Live's service principal
 +# (the OAuth client above) needs openre.stream.read, openre.stream.write, openre.key.rotate and
@@ -28,7 +28,7 @@ index 5ecdf41..1ebe063 100644
              _wsState.selectedMs = { ..._wsState.selectedMs, ...data.managed_stream };
          }
          _wsState.streamKey = data.stream_key || null;
-+        // OpenRe-ingested slot: no key in the profile, only a hint (Regenerate shows a new key once).
++        // OpenRestream-ingested slot: no key in the profile, only a hint (Regenerate shows a new key once).
 +        _wsState.streamKeyHint = data.stream_key_hint || null;
          _wsState.profile = data.broadcast_settings || {};
          _wsState.profile.vibeCoding = _wsNormalizeVibeSettings(_wsReadStoredVibeSettings(_wsState.profile));
@@ -59,7 +59,7 @@ index f0db572..4610588 100644
          const ep = data.endpoint || {};
          const rtmpUrl = ep.rtmpUrl || `rtmp://${location.hostname}:1935/live`;
 -        const streamKey = ep.streamKey || data.stream_key || 'N/A';
-+        // An OpenRe-ingested slot never returns its key here, only a hint (Regenerate shows a new key once).
++        // An OpenRestream-ingested slot never returns its key here, only a hint (Regenerate shows a new key once).
 +        const streamKey = ep.streamKey || data.stream_key || ep.streamKeyHint || 'N/A';
          document.getElementById('bc-rtmp-url').textContent = rtmpUrl;
          document.getElementById('bc-rtmp-key').textContent = streamKey;
@@ -72,7 +72,7 @@ index e8f5903..60c20bf 100644
          database.exec('CREATE INDEX IF NOT EXISTS idx_vibe_events_stream ON vibe_coding_events(stream_id)');
      } catch (e) { console.warn('[DB] vibe_coding migration:', e.message); }
  
-+    // OpenRe ingest switch (roadmap Wave 7): managed_streams.ingest_authority ('live' by default)
++    // OpenRestream ingest switch (roadmap Wave 7): managed_streams.ingest_authority ('live' by default)
 +    // and the openre_sessions mirror. Additive only; see server/openre/schema.js.
 +    try { require('../openre/schema').ensure(database); } catch (e) { console.warn('[DB] openre schema:', e.message); }
 +
@@ -87,7 +87,7 @@ index 63c0969..c88df08 100644
  
  function hasActiveLiveFeed(stream) {
      if (!stream) return false;
-+    // OpenRe.Stream holds the ingest (a mirrored session it confirmed recently): not stale.
++    // OpenRestream holds the ingest (a mirrored session it confirmed recently): not stale.
 +    if (require('./openre/mirror').hasLiveSession(stream.id)) return true;
      const streamKey = getStreamKey(stream);
      if (stream.protocol === 'rtmp') {
@@ -96,7 +96,7 @@ index 63c0969..c88df08 100644
  // OpenVibe.Media → Live webhook (vod.ready / clip.ready …). Mounted BEFORE the
  // /internal router because it authenticates with an HMAC signature, not X-Internal-Key.
  app.post('/internal/media-webhook', require('./media-proxy/webhook'));
-+// OpenVibe.Events → Live: OpenRe session lifecycle mirrored into `streams` (signed delivery,
++// OpenVibe.Events → Live: OpenRestream session lifecycle mirrored into `streams` (signed delivery,
 +// OPENRE_EVENTS_SECRET; server/openre/mirror.js). Also before /internal (no X-Internal-Key).
 +app.post('/internal/openre-events', require('./openre/mirror').webhookHandler);
  
@@ -114,7 +114,7 @@ index 63c0969..c88df08 100644
      // 5b. Resume enabled restreams for streams that survived the restart.
      // WHIP/RTMP broadcasters have no browser session to re-start them manually.
      for (const stream of db.getLiveStreams()) {
-+        // OpenRe restreams its own sessions; Live must not start a second push for them.
++        // OpenRestream restreams its own sessions; Live must not start a second push for them.
 +        if (require('./openre/mirror').ownsStream(stream.id)) continue;
          restreamManager.resumeForStream(stream.id, stream.user_id, {
              protocol: stream.protocol,
@@ -123,8 +123,8 @@ index 63c0969..c88df08 100644
      // 6e. Start periodic viewer count polling for restream destinations
      restreamManager.startViewerCountPolling();
  
-+    // 6g. OpenRe mirror reconcile (only runs when OPENRE_URL is set; idle with nothing mirrored).
-+    try { require('./openre/mirror').start(); } catch (e) { console.warn('[OpenRe] mirror reconcile not started:', e.message); }
++    // 6g. OpenRestream mirror reconcile (only runs when OPENRE_URL is set; idle with nothing mirrored).
++    try { require('./openre/mirror').start(); } catch (e) { console.warn('[OpenRestream] mirror reconcile not started:', e.message); }
 +
      // 6f. VOD storage/offload is owned by OpenVibe.Media now — nothing to start here.
  
@@ -139,14 +139,14 @@ index 0000000..fa4b4ab
 +/**
 + * The per-slot ingest switch: managed_streams.ingest_authority = 'live' (default) | 'openre'.
 + *
-+ * 'openre' means OpenRe.Stream ingests this slot's RTMP: Live's RTMP server refuses the slot's
-+ * key (so a stream can never be ingested twice), the Go Live UI shows OpenRe's ingest URL and
-+ * rotates OpenRe's key, and the slot's sessions reach `streams` through the mirror (mirror.js).
++ * 'openre' means OpenRestream ingests this slot's RTMP: Live's RTMP server refuses the slot's
++ * key (so a stream can never be ingested twice), the Go Live UI shows OpenRestream's ingest URL and
++ * rotates OpenRestream's key, and the slot's sessions reach `streams` through the mirror (mirror.js).
 + * Only RTMP moves (OPENRE_PROTOCOLS); WHIP, browser/WebRTC and JSMPEG stay on Live until
-+ * OpenRe carries them.
++ * OpenRestream carries them.
 + *
 + * Switch off = zero behaviour change: every helper here returns what Live did before unless the
-+ * slot says 'openre' AND OpenRe is configured (openre-client enabled()).
++ * slot says 'openre' AND OpenRestream is configured (openre-client enabled()).
 + */
 +const crypto = require('crypto');
 +const db = require('../db/database');
@@ -163,7 +163,7 @@ index 0000000..fa4b4ab
 +    return id ? db.getManagedStreamById(id) : null;
 +}
 +
-+/** authorityOf(slotById(id)) === 'openre', without reading the slot when OpenRe is not configured. */
++/** authorityOf(slotById(id)) === 'openre', without reading the slot when OpenRestream is not configured. */
 +function slotIsOpenre(id) {
 +    if (!id || !client.enabled()) return false;
 +    return authorityOf(slotById(id)) === 'openre';
@@ -171,7 +171,7 @@ index 0000000..fa4b4ab
 +
 +/**
 + * Live's RTMP publish handler asks this before accepting a key. A slot key is refused when its slot
-+ * is on OpenRe; a personal key (users.stream_key, no slot) is refused when any of the user's slots is,
++ * is on OpenRestream; a personal key (users.stream_key, no slot) is refused when any of the user's slots is,
 + * because Live would attach it to the user's live rows and push the user's destinations twice.
 + */
 +function refusesLiveIngest({ managedStream, user = null, protocol = 'rtmp' }) {
@@ -197,7 +197,7 @@ index 0000000..fa4b4ab
 +}
 +
 +/**
-+ * What the Go Live UI shows for an OpenRe slot: OpenRe's RTMP URL and the hint of its current key
++ * What the Go Live UI shows for an OpenRestream slot: OpenRestream's RTMP URL and the hint of its current key
 + * (the key itself is only ever shown once, by a rotation).
 + */
 +async function ingestFor(slot, subject) {
@@ -210,15 +210,15 @@ index 0000000..fa4b4ab
 +        rtmp_url: rtmp ? rtmp.url : null,
 +        stream_key_hint: rtmp && rtmp.key_hint
 +            ? `Shown once: press Regenerate for a new key (current key ends in …${rtmp.key_hint})`
-+            : 'Press Regenerate to get your OpenRe stream key',
++            : 'Press Regenerate to get your OpenRestream stream key',
 +        openre_manage_url: client.manageUrl(stream ? stream.id : slot.openre_stream_id),
 +    };
 +}
 +
-+/** Regenerate on an OpenRe slot: OpenRe rotates, the new key is returned once. */
++/** Regenerate on an OpenRestream slot: OpenRestream rotates, the new key is returned once. */
 +async function rotateFor(slot, subject) {
 +    const streamId = slot.openre_stream_id || (await client.streamForSlot(slot.id) || {}).id;
-+    if (!streamId) throw new client.OpenReError('this slot has no OpenRe stream yet', 409);
++    if (!streamId) throw new client.OpenReError('this slot has no OpenRestream stream yet', 409);
 +    const r = await client.rotateKey(streamId, { subject });
 +    return { stream_key: r.key.key, stream_key_managed_by: 'openre', rtmp_url: r.ingest && r.ingest.rtmp ? r.ingest.rtmp.url : null };
 +}
@@ -231,8 +231,8 @@ index 0000000..fa4b4ab
 +
 +/**
 + * The admin switch (PUT /api/admin/openre/managed/:id/ingest-authority).
-+ *   'openre': needs OpenRe configured, the slot offline on Live, the owner's canonical subject;
-+ *             finds or creates the OpenRe definition, then (one transaction) flips the slot and
++ *   'openre': needs OpenRestream configured, the slot offline on Live, the owner's canonical subject;
++ *             finds or creates the OpenRestream definition, then (one transaction) flips the slot and
 + *             rotates Live's own key for it, so no key that existed before works anywhere.
 + *   'live':   flips back (rollback). Live's key was rotated at the switch: the broadcaster
 + *             regenerates it on the Go Live page.
@@ -243,15 +243,15 @@ index 0000000..fa4b4ab
 +    if (!['live', 'openre'].includes(authority)) return { status: 400, error: "authority must be 'live' or 'openre'" };
 +    if (authority === 'live') {
 +        db.run("UPDATE managed_streams SET ingest_authority = 'live', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [slot.id]);
-+        return { status: 200, body: { managed_stream_id: slot.id, ingest_authority: 'live', next: 'The broadcaster regenerates the stream key on the Go Live page (the Live key was rotated when the slot moved to OpenRe).' } };
++        return { status: 200, body: { managed_stream_id: slot.id, ingest_authority: 'live', next: 'The broadcaster regenerates the stream key on the Go Live page (the Live key was rotated when the slot moved to OpenRestream).' } };
 +    }
-+    if (!client.enabled()) return { status: 409, error: 'OpenRe is not configured on this Live (OPENRE_URL, OV_OAUTH_CLIENT_SECRET)' };
++    if (!client.enabled()) return { status: 409, error: 'OpenRestream is not configured on this Live (OPENRE_URL, OV_OAUTH_CLIENT_SECRET)' };
 +    if (slot.ingest_authority === 'openre') return { status: 200, body: { managed_stream_id: slot.id, ingest_authority: 'openre', openre_stream_id: slot.openre_stream_id, unchanged: true } };
 +    const live = db.get('SELECT id FROM streams WHERE managed_stream_id = ? AND is_live = 1 LIMIT 1', [slot.id]);
 +    if (live) return { status: 409, error: `Slot ${slot.id} is live on Live (stream ${live.id}); switch it in a maintenance window, while it is offline` };
 +    const method = String(slot.streaming_method || '').toLowerCase();
 +    if (!force && slot.protocol !== 'rtmp' && !['rtmp', 'obs'].includes(method)) {
-+        return { status: 409, error: `Slot ${slot.id} is a ${slot.protocol}${method ? `/${method}` : ''} slot; OpenRe only ingests RTMP today (pass force to switch anyway)` };
++        return { status: 409, error: `Slot ${slot.id} is a ${slot.protocol}${method ? `/${method}` : ''} slot; OpenRestream only ingests RTMP today (pass force to switch anyway)` };
 +    }
 +    const subject = require('../auth/identity-sync').subjectOf(slot.user_id);
 +    if (!subject) return { status: 409, error: 'The owner has no canonical subject yet (they need to sign in to Live once)' };
@@ -263,7 +263,7 @@ index 0000000..fa4b4ab
 +    }
 +    const newLiveKey = crypto.randomBytes(20).toString('hex');
 +    const flipped = db.getDb().transaction(() => {
-+        // Checked again here: a Live publish may have started while OpenRe was being asked.
++        // Checked again here: a Live publish may have started while OpenRestream was being asked.
 +        if (db.get('SELECT id FROM streams WHERE managed_stream_id = ? AND is_live = 1 LIMIT 1', [slot.id])) return false;
 +        db.run("UPDATE managed_streams SET ingest_authority = 'openre', openre_stream_id = ?, stream_key = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [stream.id, newLiveKey, slot.id]);
 +        return true;
@@ -277,7 +277,7 @@ index 0000000..fa4b4ab
 +            openre_stream_id: stream.id,
 +            rtmp_url: stream.ingest && stream.ingest.rtmp ? stream.ingest.rtmp.url : null,
 +            live_key_rotated: true,
-+            next: 'The broadcaster presses Regenerate on the Go Live page (OpenRe issues the key) and pastes the new server and key into OBS.',
++            next: 'The broadcaster presses Regenerate on the Go Live page (OpenRestream issues the key) and pastes the new server and key into OBS.',
 +        },
 +    };
 +}
@@ -291,19 +291,19 @@ index 0000000..5a32b1c
 @@ -0,0 +1,216 @@
 +'use strict';
 +/**
-+ * OpenRe sessions → Live's `streams` table (roadmap Wave 7, ADR-009: Live observes sessions through
-+ * OpenRe events and APIs). Watch pages, discovery, go-live notifications and analytics keep working
-+ * because an OpenRe-ingested session becomes an ordinary live `streams` row.
++ * OpenRestream sessions → Live's `streams` table (roadmap Wave 7, ADR-009: Live observes sessions through
++ * OpenRestream events and APIs). Watch pages, discovery, go-live notifications and analytics keep working
++ * because an OpenRestream-ingested session becomes an ordinary live `streams` row.
 + *
 + *   POST /internal/openre-events   the endpoint of Live's OpenVibe.Events subscription (topic
 + *                                  openre.session.*), signed with OPENRE_EVENTS_SECRET. Each event
 + *                                  is applied exactly once (openvibe-sdk inbox, consumer
 + *                                  'live-openre-mirror'), in revision order per session.
-+ *   reconcile (every 30 s)         for mirrored live sessions only: asks OpenRe for the session,
-+ *                                  keeps the row's heartbeat fresh, ends it if OpenRe says it ended
++ *   reconcile (every 30 s)         for mirrored live sessions only: asks OpenRestream for the session,
++ *                                  keeps the row's heartbeat fresh, ends it if OpenRestream says it ended
 + *                                  (covers a missed event). Does nothing when no row is mirrored.
 + *
-+ * Consent: a session is mirrored only when its slot is switched to OpenRe on Live AND the OpenRe
++ * Consent: a session is mirrored only when its slot is switched to OpenRestream on Live AND the OpenRestream
 + * definition says mirror_to_live (plan §15.10 "explicit visibility and consent").
 + */
 +const db = require('../db/database');
@@ -312,7 +312,7 @@ index 0000000..5a32b1c
 +
 +const CONSUMER = 'live-openre-mirror';
 +const RECONCILE_MS = 30000;
-+// A mirrored session OpenRe has not confirmed for this long is left to Live's stale cleanup.
++// A mirrored session OpenRestream has not confirmed for this long is left to Live's stale cleanup.
 +const CONFIRM_WINDOW_MIN = 30;
 +let inbox = null;
 +let timer = null;
@@ -391,11 +391,11 @@ index 0000000..5a32b1c
 +                    const channel = db.getChannelByUserId(user.id);
 +                    const configId = slot.control_config_id || (channel && channel.active_control_config_id);
 +                    if (configId) db.applyConfigToStream(configId, streamId);
-+                } catch (e) { console.warn('[OpenRe] control config for mirrored stream failed:', e.message); }
++                } catch (e) { console.warn('[OpenRestream] control config for mirrored stream failed:', e.message); }
 +                const stream = db.getStreamById(streamId) || { id: streamId };
-+                try { require('../streaming/golive-notify').notifyFollowersGoLive(user, stream); } catch (e) { console.warn('[OpenRe] go-live notify failed:', e.message); }
++                try { require('../streaming/golive-notify').notifyFollowersGoLive(user, stream); } catch (e) { console.warn('[OpenRestream] go-live notify failed:', e.message); }
 +                try { require('../streaming/live-events').announceGoLive(stream, user); } catch { /* */ }
-+                console.log(`[OpenRe] session ${sessionId} mirrored into stream ${streamId} (${user.username}, slot ${slot.id})`);
++                console.log(`[OpenRestream] session ${sessionId} mirrored into stream ${streamId} (${user.username}, slot ${slot.id})`);
 +            },
 +        };
 +    }
@@ -419,7 +419,7 @@ index 0000000..5a32b1c
 +            try { require('../integrations/robotstreamer-service').stopForStream(streamId); } catch { /* */ }
 +            try { require('../integrations/chat-relay-service').stopForStream(streamId); } catch { /* */ }
 +            try { require('../integrations/ai-chatbot-service').stopForStream(streamId); } catch { /* */ }
-+            console.log(`[OpenRe] session ${sessionId} ${state}: stream ${streamId} ended`);
++            console.log(`[OpenRestream] session ${sessionId} ${state}: stream ${streamId} ended`);
 +        },
 +    };
 +}
@@ -441,20 +441,20 @@ index 0000000..5a32b1c
 +            after = r.after || null;
 +            return r.outcome;
 +        });
-+        if (!result.duplicate && after) { try { after(); } catch (e) { console.warn('[OpenRe] post-commit step failed:', e.message); } }
++        if (!result.duplicate && after) { try { after(); } catch (e) { console.warn('[OpenRestream] post-commit step failed:', e.message); } }
 +    } catch (err) {
-+        console.error('[OpenRe] event apply failed:', err.message);
++        console.error('[OpenRestream] event apply failed:', err.message);
 +        return res.status(500).json({ error: 'apply failed' }); // Events retries
 +    }
 +    return res.status(204).end();
 +}
 +
-+/** Stream id → the mirrored OpenRe session (or null). */
++/** Stream id → the mirrored OpenRestream session (or null). */
 +function sessionForStream(streamId) {
 +    try { return db.get('SELECT * FROM openre_sessions WHERE stream_id = ? ORDER BY updated_at DESC LIMIT 1', [streamId]) || null; } catch { return null; }
 +}
 +
-+/** Does OpenRe hold a live ingest for this stream (confirmed recently)? Used by Live's stale cleanup. */
++/** Does OpenRestream hold a live ingest for this stream (confirmed recently)? Used by Live's stale cleanup. */
 +function hasLiveSession(streamId) {
 +    try {
 +        return Boolean(db.get(`SELECT 1 FROM openre_sessions WHERE stream_id = ? AND state = 'live'
@@ -462,7 +462,7 @@ index 0000000..5a32b1c
 +    } catch { return false; }
 +}
 +
-+/** Does OpenRe own this stream at all (so Live must not start its own restream/recording for it)? */
++/** Does OpenRestream own this stream at all (so Live must not start its own restream/recording for it)? */
 +function ownsStream(streamId) {
 +    return Boolean(sessionForStream(streamId));
 +}
@@ -473,14 +473,14 @@ index 0000000..5a32b1c
 +    if (!rows.length || !client.enabled()) return 0;
 +    let n = 0;
 +    for (const r of rows) {
-+        // Live ended the row itself (End Stream, or stale cleanup while OpenRe was unreachable):
++        // Live ended the row itself (End Stream, or stale cleanup while OpenRestream was unreachable):
 +        // stop tracking it rather than keeping a live mirror of an offline stream.
 +        const row = r.stream_id ? db.getStreamById(r.stream_id) : null;
 +        if (row && !row.is_live) { db.run("UPDATE openre_sessions SET state = 'detached', updated_at = CURRENT_TIMESTAMP WHERE session_id = ?", [r.session_id]); continue; }
 +        let s;
 +        try { s = await client.getSession(r.session_id); } catch (err) {
 +            if (err.status === 404) s = { state: 'failed', revision: r.revision + 1, ended_at: null };
-+            else continue; // OpenRe unreachable: keep the last known state (bounded by CONFIRM_WINDOW_MIN)
++            else continue; // OpenRestream unreachable: keep the last known state (bounded by CONFIRM_WINDOW_MIN)
 +        }
 +        if (s.state === 'live' || s.state === 'starting') {
 +            db.run("UPDATE openre_sessions SET confirmed_at = CURRENT_TIMESTAMP WHERE session_id = ?", [r.session_id]);
@@ -497,7 +497,7 @@ index 0000000..5a32b1c
 +
 +function start() {
 +    if (timer || !client.enabled()) return;
-+    timer = setInterval(() => { reconcileOnce().catch(err => console.warn('[OpenRe] reconcile failed:', err.message)); }, RECONCILE_MS);
++    timer = setInterval(() => { reconcileOnce().catch(err => console.warn('[OpenRestream] reconcile failed:', err.message)); }, RECONCILE_MS);
 +    if (timer.unref) timer.unref();
 +}
 +
@@ -513,8 +513,8 @@ index 0000000..6862412
 @@ -0,0 +1,127 @@
 +'use strict';
 +/**
-+ * OpenRe.Stream client (roadmap Wave 7). Live asks OpenRe for stream definitions, ingest URLs,
-+ * key rotation, sessions and playback descriptors; it never touches an OpenRe worker.
++ * OpenRestream client (roadmap Wave 7). Live asks OpenRestream for stream definitions, ingest URLs,
++ * key rotation, sessions and playback descriptors; it never touches an OpenRestream worker.
 + *
 + * Auth: Live's Network service principal (OV_OAUTH_CLIENT_ID / OV_OAUTH_CLIENT_SECRET),
 + * client-credentials tokens for audience openvibe.openre. Grants Live needs on openre:
@@ -522,7 +522,7 @@ index 0000000..6862412
 + * Calls made for a streamer carry X-OV-Subject: <their usr_ subject>.
 + *
 + * Env:
-+ *   OPENRE_URL            OpenRe API, host-local (http://127.0.0.1:4500). Unset = integration off:
++ *   OPENRE_URL            OpenRestream API, host-local (http://127.0.0.1:4500). Unset = integration off:
 + *                         every slot behaves exactly as before, whatever its ingest_authority.
 + *   OPENRE_PUBLIC_URL     for links to the standalone UI (default https://openre.stream)
 + *   OPENRE_EVENTS_SECRET  the signing secret of Live's OpenVibe.Events subscription to openre.*
@@ -543,7 +543,7 @@ index 0000000..6862412
 +    };
 +}
 +
-+/** True when Live is configured to talk to OpenRe at all. */
++/** True when Live is configured to talk to OpenRestream at all. */
 +function enabled() {
 +    const s = settings();
 +    return Boolean(s.url && s.clientSecret);
@@ -563,7 +563,7 @@ index 0000000..6862412
 +}
 +
 +async function request(method, path, { body, subject, timeoutMs = TIMEOUT_MS } = {}) {
-+    if (!enabled()) throw new OpenReError('OpenRe integration is not configured (OPENRE_URL, OV_OAUTH_CLIENT_SECRET)', 0);
++    if (!enabled()) throw new OpenReError('OpenRestream integration is not configured (OPENRE_URL, OV_OAUTH_CLIENT_SECRET)', 0);
 +    const s = settings();
 +    const headers = { Accept: 'application/json', Authorization: `Bearer ${await tokenClient().getToken()}` };
 +    if (subject) headers['X-OV-Subject'] = subject;
@@ -574,15 +574,15 @@ index 0000000..6862412
 +        res = await fetch(`${s.url}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
 +        text = await res.text().catch(() => '');
 +    } catch (err) {
-+        throw new OpenReError(`OpenRe unreachable (${method} ${path}): ${err.message}`, 0);
++        throw new OpenReError(`OpenRestream unreachable (${method} ${path}): ${err.message}`, 0);
 +    }
 +    let json = null;
 +    if (text) { try { json = JSON.parse(text); } catch { json = null; } }
-+    if (!res.ok) throw new OpenReError((json && (json.detail || json.error)) || `OpenRe ${res.status} on ${method} ${path}`, res.status, json);
++    if (!res.ok) throw new OpenReError((json && (json.detail || json.error)) || `OpenRestream ${res.status} on ${method} ${path}`, res.status, json);
 +    return json;
 +}
 +
-+/** The OpenRe stream definition serving a Live slot, or null. */
++/** The OpenRestream stream definition serving a Live slot, or null. */
 +async function streamForSlot(managedStreamId) {
 +    const r = await request('GET', `/api/v1/streams?external_ref=${encodeURIComponent(`live:managed_stream:${managedStreamId}`)}`);
 +    return (r && r.streams && r.streams[0]) || null;
@@ -646,8 +646,8 @@ index 0000000..836fd8c
 @@ -0,0 +1,49 @@
 +'use strict';
 +/**
-+ * Admin routes for the OpenRe ingest switch (mounted at /api/admin/openre, admin only). The lead
-+ * flips a slot during a maintenance window agreed with the broadcaster (OpenRe.Stream README,
++ * Admin routes for the OpenRestream ingest switch (mounted at /api/admin/openre, admin only). The lead
++ * flips a slot during a maintenance window agreed with the broadcaster (OpenRestream README,
 + * "RTMP cutover runbook").
 + *
 + *   GET /api/admin/openre/status                                   configuration + switched slots
@@ -684,11 +684,11 @@ index 0000000..836fd8c
 +    try {
 +        const r = await authority.setAuthority(id, String((req.body && req.body.authority) || ''), { force: Boolean(req.body && req.body.force) });
 +        if (r.error) return res.status(r.status).json({ error: r.error });
-+        console.log(`[OpenRe] admin ${req.user.username} set slot ${id} ingest authority to ${r.body.ingest_authority}`);
++        console.log(`[OpenRestream] admin ${req.user.username} set slot ${id} ingest authority to ${r.body.ingest_authority}`);
 +        return res.status(r.status).json(r.body);
 +    } catch (err) {
-+        console.error('[OpenRe] switch failed:', err.message);
-+        return res.status(err.status && err.status < 500 ? 409 : 502).json({ error: `OpenRe: ${err.message}` });
++        console.error('[OpenRestream] switch failed:', err.message);
++        return res.status(err.status && err.status < 500 ? 409 : 502).json({ error: `OpenRestream: ${err.message}` });
 +    }
 +});
 +
@@ -701,11 +701,11 @@ index 0000000..c0c0d85
 @@ -0,0 +1,36 @@
 +'use strict';
 +/**
-+ * OpenRe ingest switch — Live-side schema (roadmap Wave 7, ADR-009). Additive and idempotent:
++ * OpenRestream ingest switch — Live-side schema (roadmap Wave 7, ADR-009). Additive and idempotent:
 + *
 + *   managed_streams.ingest_authority  'live' (default) | 'openre'   who ingests RTMP for this slot
-+ *   managed_streams.openre_stream_id  the OpenRe stream definition serving the slot (std_…)
-+ *   openre_sessions                   Live's projection of OpenRe ingest sessions it mirrors into
++ *   managed_streams.openre_stream_id  the OpenRestream stream definition serving the slot (std_…)
++ *   openre_sessions                   Live's projection of OpenRestream ingest sessions it mirrors into
 + *                                     `streams` (rebuilt from openre.session.* events; the
 + *                                     revision guard makes out-of-order delivery harmless)
 + *
@@ -744,7 +744,7 @@ index 4b5f8e4..4ac081b 100644
  const router = express.Router();
  
 +/**
-+ * A slot ingested by OpenRe.Stream (ingest_authority = 'openre') restreams from OpenRe: its
++ * A slot ingested by OpenRestream (ingest_authority = 'openre') restreams from OpenRestream: its
 + * destinations are managed there (openre.stream), so Live refuses to edit or run them here rather
 + * than letting two systems push the same stream. Slots on Live's own ingest are unaffected.
 + */
@@ -753,7 +753,7 @@ index 4b5f8e4..4ac081b 100644
 +    if (!openre.slotIsOpenre(managedStreamId)) return false;
 +    const slot = openre.slotById(managedStreamId);
 +    res.status(409).json({
-+        error: 'Restreaming for this stream slot is managed on OpenRe.Stream',
++        error: 'Restreaming for this stream slot is managed on OpenRestream',
 +        managed_by: 'openre',
 +        manage_url: require('../openre/openre-client').manageUrl(slot && slot.openre_stream_id),
 +    });
@@ -849,12 +849,12 @@ index 70a0857..2c5d856 100644
              restream_destinations: restreamDestinations,
 -        });
 +        };
-+        // OpenRe ingests this slot: its RTMP server and key come from OpenRe (the key is only
++        // OpenRestream ingests this slot: its RTMP server and key come from OpenRestream (the key is only
 +        // ever shown by Regenerate). Slots on Live's own ingest get exactly the response above.
 +        if (openreAuthority.authorityOf(ms) === 'openre') {
 +            const subject = require('../auth/identity-sync').subjectOf(ms.user_id);
 +            Object.assign(body, { stream_key: null }, await openreAuthority.ingestFor(ms, subject).catch((err) => ({
-+                ingest_authority: 'openre', stream_key_managed_by: 'openre', rtmp_url: null, stream_key_hint: `OpenRe is unreachable (${err.message})`,
++                ingest_authority: 'openre', stream_key_managed_by: 'openre', rtmp_url: null, stream_key_hint: `OpenRestream is unreachable (${err.message})`,
 +            })));
 +        }
 +        res.json(body);
@@ -883,14 +883,14 @@ index 70a0857..2c5d856 100644
              return res.status(403).json({ error: 'Not your managed stream' });
          }
  
-+        // OpenRe ingests this slot: OpenRe rotates its key (the old one stops working at once) and
++        // OpenRestream ingests this slot: OpenRestream rotates its key (the old one stops working at once) and
 +        // the new one is shown here, once.
 +        if (openreAuthority.authorityOf(ms) === 'openre') {
 +            try {
 +                const subject = require('../auth/identity-sync').subjectOf(ms.user_id);
 +                return res.json(await openreAuthority.rotateFor(ms, subject));
 +            } catch (err) {
-+                return res.status(502).json({ error: `Could not rotate the key on OpenRe: ${err.message}` });
++                return res.status(502).json({ error: `Could not rotate the key on OpenRestream: ${err.message}` });
 +            }
 +        }
 +
@@ -911,13 +911,13 @@ index 70a0857..2c5d856 100644
                  ...(whipUrlWarning ? { whipUrlWarning } : {}),
              };
 +        } else if (stream.protocol === 'rtmp' && openreAuthority.slotIsOpenre(stream.managed_stream_id)) {
-+            // OpenRe ingests this slot: its server URL, the hint of its key (never the key).
++            // OpenRestream ingests this slot: its server URL, the hint of its key (never the key).
 +            const slot = openreAuthority.slotById(stream.managed_stream_id);
 +            const ingest = await openreAuthority.ingestFor(slot, require('../auth/identity-sync').subjectOf(slot.user_id)).catch(() => ({}));
 +            endpoint = {
 +                rtmpUrl: ingest.rtmp_url || null,
 +                streamKey: null,
-+                streamKeyHint: ingest.stream_key_hint || 'Press Regenerate to get your OpenRe stream key',
++                streamKeyHint: ingest.stream_key_hint || 'Press Regenerate to get your OpenRestream stream key',
 +                keyManagedBy: 'openre',
 +                flvUrl: `/api/streams/rtmp-proxy/${stream.id}.flv`,
 +            };
@@ -955,8 +955,8 @@ index 70a0857..2c5d856 100644
 +        let url;
 +        const mirrored = openreMirror.sessionForStream(stream.id);
 +        if (mirrored) {
-+            // An OpenRe session: pull HTTP-FLV from the OpenRe worker that holds it, as named by
-+            // OpenRe's playback descriptor (a loopback URL on this host; no key in it).
++            // An OpenRestream session: pull HTTP-FLV from the OpenRestream worker that holds it, as named by
++            // OpenRestream's playback descriptor (a loopback URL on this host; no key in it).
 +            if (mirrored.state !== 'live') return res.status(404).end();
 +            const pb = await require('../openre/openre-client').playback(mirrored.session_id).catch(() => null);
 +            if (!pb || !pb.flv || !/^http:\/\/127\.0\.0\.1:\d+\/live\/ses_[0-9A-Z]+\.flv$/.test(pb.flv.internal_url)) return res.status(502).end();
@@ -968,7 +968,7 @@ index 70a0857..2c5d856 100644
 +            url = `http://127.0.0.1:${nmsPort}/live/${flvKey}.flv`;
 +        }
  
-+        if (req.destroyed) return undefined; // the viewer left while OpenRe was asked
++        if (req.destroyed) return undefined; // the viewer left while OpenRestream was asked
          const http = require('http');
          const upstream = http.get(url, (nmsRes) => {
              if (nmsRes.statusCode !== 200) {
@@ -980,11 +980,11 @@ index fb8ba5c..c857f5b 100644
                  return;
              }
  
-+            // OpenRe.Stream ingests this slot (managed_streams.ingest_authority = 'openre'): refuse
++            // OpenRestream ingests this slot (managed_streams.ingest_authority = 'openre'): refuse
 +            // here so one stream can never be ingested twice. Slots on 'live' (the default) are
 +            // untouched. See server/openre/authority.js.
 +            if (require('../openre/authority').refusesLiveIngest({ managedStream, user: managedStream ? null : resolvedUser, protocol: 'rtmp' })) {
-+                console.log(`[RTMP] Rejected: ${managedStream ? `slot ${managedStream.id}` : `personal key of ${resolvedUser.username}`} is ingested by OpenRe`);
++                console.log(`[RTMP] Rejected: ${managedStream ? `slot ${managedStream.id}` : `personal key of ${resolvedUser.username}`} is ingested by OpenRestream`);
 +                const session = this.nms.getSession(id);
 +                if (session) session.reject();
 +                return;
@@ -1001,9 +1001,9 @@ index 0000000..6ffdc33
 @@ -0,0 +1,231 @@
 +'use strict';
 +
-+// OpenRe ingest switch (roadmap Wave 7, ADR-009). With OPENRE_URL unset, or a slot on 'live' (the
++// OpenRestream ingest switch (roadmap Wave 7, ADR-009). With OPENRE_URL unset, or a slot on 'live' (the
 +// default), nothing changes. With a slot switched to 'openre': Live's RTMP refuses its key, the
-+// Go Live helpers show OpenRe's URL and rotate OpenRe's key, and OpenRe session events (signed
++// Go Live helpers show OpenRestream's URL and rotate OpenRestream's key, and OpenRestream session events (signed
 +// Events deliveries, applied once, in revision order) become ordinary `streams` rows.
 +
 +const assert = require('assert');
@@ -1100,7 +1100,7 @@ index 0000000..6ffdc33
 +    assert.strictEqual(authority.serializeSlot(slot701), slot701, 'the same object: responses unchanged');
 +    assert.strictEqual(authority.refusesLiveIngest({ managedStream: slot701 }), false);
 +    assert.strictEqual(authority.refusesLiveIngest({ managedStream: null, user: { id: 601 } }), false);
-+    // Even a slot marked 'openre' behaves as before while OpenRe is not configured.
++    // Even a slot marked 'openre' behaves as before while OpenRestream is not configured.
 +    d.prepare("UPDATE managed_streams SET ingest_authority = 'openre' WHERE id = 701").run();
 +    const marked = db.getManagedStreamById(701);
 +    assert.strictEqual(authority.authorityOf(marked), 'live');
@@ -1150,7 +1150,7 @@ index 0000000..6ffdc33
 +    assert.strictEqual(db.getManagedStreamByStreamKey('livekey701aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'), undefined, "Live's old key is rotated away");
 +    assert.strictEqual(authority.refusesLiveIngest({ managedStream: switched }), true, "Live's RTMP refuses the slot");
 +    assert.strictEqual(authority.refusesLiveIngest({ managedStream: switched, protocol: 'whip' }), false, 'only RTMP moved');
-+    assert.strictEqual(authority.refusesLiveIngest({ managedStream: null, user: { id: 602 } }), false, 'personal keys of users without an OpenRe slot stay on Live');
++    assert.strictEqual(authority.refusesLiveIngest({ managedStream: null, user: { id: 602 } }), false, 'personal keys of users without an OpenRestream slot stay on Live');
 +    assert.strictEqual(authority.refusesLiveIngest({ managedStream: null, user: { id: 601 } }), true, 'a personal key cannot double-ingest a switched channel');
 +    const shown = authority.serializeSlot(switched);
 +    assert.strictEqual(shown.stream_key, null);
@@ -1180,7 +1180,7 @@ index 0000000..6ffdc33
 +    assert.strictEqual(mirror.hasLiveSession(streamId), true, 'stale cleanup leaves it alone');
 +    assert.strictEqual(mirror.ownsStream(streamId), true, 'Live does not resume its own restreams for it');
 +
-+    // Reconcile: OpenRe says live → heartbeat refreshed; says ended → row ended.
++    // Reconcile: OpenRestream says live → heartbeat refreshed; says ended → row ended.
 +    openreSessions[SES(4)] = { id: SES(4), state: 'live', revision: 2 };
 +    d.prepare("UPDATE streams SET last_heartbeat = datetime('now', '-10 minutes') WHERE id = ?").run(streamId);
 +    await mirror.reconcileOnce();

@@ -10,7 +10,7 @@
  *   DELETE /api/v1/:app/vods/:id             → drop an empty shell / an ephemeral clips-only recording
  *
  * The rtmp_url is the owning worker's loopback play URL (rtmp://127.0.0.1:<port>/live/<session id>):
- * no ingest key ever leaves OpenRe. Media records and finalises; OpenRe only asks.
+ * no ingest key ever leaves OpenRestream. Media records and finalises; OpenRestream only asks.
  *
  * Auth: config.media.auth === 'key' sends the tenant app key (MEDIA_API_KEY), which Media's VOD
  * routes accept today. 'service' sends a Network service token (audience openvibe.media); Media's

@@ -191,7 +191,7 @@ function createSessions({ db, config, events, clock, definitions, workers }) {
     }
 
     /**
-     * Where to watch a session. Internal URLs are loopback addresses on the OpenRe host (Live and
+     * Where to watch a session. Internal URLs are loopback addresses on the OpenRestream host (Live and
      * Media run there too); public_url is served by openre-api's /play proxy.
      */
     async function playback(session) {

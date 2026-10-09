@@ -1,6 +1,6 @@
 'use strict';
 // Live lineage (D20): the coordinator asks OpenVibe.Live's canonical resolver which channel a Live-linked
-// definition belongs to, with OpenRe's service token; session events carry the answer.
+// definition belongs to, with OpenRestream's service token; session events carry the answer.
 const assert = require('assert');
 const { runtime, manualClock, suite, OWNER, outboxEnvelopes, silent } = require('./helpers');
 const { createCoordinator } = require('../server/coordinator');
@@ -31,7 +31,7 @@ const RESOLVED = { status: 'resolved', channel: { id: '17', slug: 'goosely', own
 t('a Live-linked definition is resolved with its owner and slot; an unlinked one is never asked about', async () => {
     const { rt, lineage, asked } = await setup(RESOLVED);
     const linked = (await rt.store.definitions.create({ owner_subject: OWNER, mirror_to_live: true, external_refs: [{ service: 'live', type: 'managed_stream', id: '12' }] })).definition;
-    await rt.store.definitions.create({ owner_subject: OWNER, title: 'OpenRe only' });
+    await rt.store.definitions.create({ owner_subject: OWNER, title: 'OpenRestream only' });
     const out = await lineage.refresh();
     assert.deepStrictEqual(out, { checked: 1, resolved: 1 });
     assert.deepStrictEqual(asked, [{ owner_subject: OWNER, slot_id: '12' }], 'owner subject and slot id, never a display name');

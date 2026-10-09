@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════
-# OpenRe.Stream deploy (run on the host as root; the lead runs it, never CI).
+# OpenRestream deploy (run on the host as root; the lead runs it, never CI).
 #
 #   deploy/scripts/deploy.sh release [<git-ref>]   check out <ref> (default origin/main) into
 #                                                  /opt/openre.stream/releases/<sha>, npm ci
@@ -20,7 +20,7 @@
 set -euo pipefail
 
 ROOT=/opt/openre.stream
-REPO=https://github.com/OpenVibers/OpenRe.Stream.git
+REPO=https://github.com/OpenVibers/OpenRestream.git
 API=http://127.0.0.1:4500
 NODE_BIN=${NODE_BIN:-node}
 

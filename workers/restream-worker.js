@@ -31,7 +31,7 @@ function createRestreamWorker({ rt, log = console, exit = (code) => process.exit
         },
     });
 
-    /** The loopback source URL for a session's protocol, or null when OpenRe cannot restream it yet. */
+    /** The loopback source URL for a session's protocol, or null when OpenRestream cannot restream it yet. */
     async function inputUrlFor(session) {
         if (session.protocol === 'rtmp') {
             const pb = await store.sessions.playback(session);
@@ -73,7 +73,7 @@ function createRestreamWorker({ rt, log = console, exit = (code) => process.exit
                 egressBase = `http://127.0.0.1:${ep.egressPort}`;
             } else {
                 input = await inputUrlFor(session);
-                if (!input) { await store.outputs.report(row.id, { state: 'failed', last_error: `restream from ${session.protocol} sessions is not supported by OpenRe yet`, ended_at: Date.now() }, { workerId: runtime.me.id }); continue; }
+                if (!input) { await store.outputs.report(row.id, { state: 'failed', last_error: `restream from ${session.protocol} sessions is not supported by OpenRestream yet`, ended_at: Date.now() }, { workerId: runtime.me.id }); continue; }
             }
             // Let the ingest settle before pulling (Live waits 3 s for node-media-server's FLV).
             if (session.live_at && Date.now() - session.live_at < config.outputs.startDelayMs) continue;

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════
-# OpenRe.Stream deploy: a thin wrapper around `ovhost deploy openre` (OpenVibe.Host, strategy
+# OpenRestream deploy: a thin wrapper around `ovhost deploy openre` (OpenVibe.Host, strategy
 # release-layout; roadmap WS-N task 11; OpenVibe.Host docs/deploy-strategies.md). Run on the host as root.
 #
 #   deploy/scripts/deploy.sh [deploy [<ref>]]       ovhost deploy openre [--to <ref>]: release + api in one

@@ -14,7 +14,7 @@ const { createOutputs } = require('./outputs');
 const { createRecordings } = require('./recordings');
 
 /**
- * The handle every store gets: its transactions are SERIALIZABLE. Several OpenRe processes change the same rows (a
+ * The handle every store gets: its transactions are SERIALIZABLE. Several OpenRestream processes change the same rows (a
  * publish admitted by ingest while the coordinator fails a lost worker's session); PostgreSQL detects the conflict
  * and the SDK runs the loser again (40001 is retried).
  */

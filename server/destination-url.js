@@ -9,7 +9,7 @@
  *     user:password@, no whitespace or control characters, at most 2048 characters
  *   - the host may not be (or resolve to) loopback, private, link-local, CGNAT, multicast or
  *     unspecified addresses, unless OPENRE_DEST_ALLOW_PRIVATE is on (tests, a restream box on the
- *     operator's LAN). Live allowed private hosts; OpenRe does not by default, and the migration
+ *     operator's LAN). Live allowed private hosts; OpenRestream does not by default, and the migration
  *     holds such destinations with a recorded reason instead of importing them enabled.
  */
 const dns = require('dns');

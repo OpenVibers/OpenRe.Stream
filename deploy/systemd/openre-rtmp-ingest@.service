@@ -1,5 +1,5 @@
 [Unit]
-Description=OpenRe.Stream RTMP ingest worker, release %i
+Description=OpenRestream RTMP ingest worker, release %i
 # One instance per release (instance name = the release directory). A worker deploy STARTS a new
 # instance; the coordinator then drains the older generation, which closes its public listener,
 # keeps its publishers until they leave (or OPENRE_DRAIN_MAX_MS), and exits 0 by itself.

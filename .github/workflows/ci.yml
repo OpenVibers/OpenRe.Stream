@@ -6,7 +6,7 @@ on:
 jobs:
   # install, node --check, npm test and openvibe-contracts-check: the shared test job (Track Q). ADR-035: PostgreSQL
   # 18 + PgBouncer (transaction mode) + Valkey 9 containers (openvibe-sdk scripts/test-services.sh); npm test runs every
-  # file on PGlite, test:pg runs them all through PgBouncer, with the tests that start several OpenRe processes.
+  # file on PGlite, test:pg runs them all through PgBouncer, with the tests that start several OpenRestream processes.
   test:
     uses: OpenVibers/OpenVibe.Shared/.github/workflows/test.yml@423fe519b5fe9594cc81b670e5ba5cb9f21f6176
     with:

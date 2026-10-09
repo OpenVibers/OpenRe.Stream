@@ -1,6 +1,6 @@
 'use strict';
 /**
- * OpenRe.Stream configuration. Everything comes from the environment (.env in development,
+ * OpenRestream configuration. Everything comes from the environment (.env in development,
  * /etc/openvibe/openre.env in production); .env.example documents every name.
  *
  * load(env) is pure so tests (and every worker process) can build a config without touching
@@ -75,7 +75,7 @@ function load(env = process.env) {
         // ── Ingest (RTMP) ───────────────────────────────────────
         rtmp: {
             // Public ingest port. Live's in-process ingest owns 1935 until the RTMP cutover
-            // (README "Port plan"); OpenRe listens on 1936 until then.
+            // (README "Port plan"); OpenRestream listens on 1936 until then.
             port: rtmpPort,
             // Further public ports served by every worker, e.g. 1935 once Live's own RTMP ingest is
             // retired (README "Port plan"): URLs handed out with :1936 keep working forever.
@@ -97,7 +97,7 @@ function load(env = process.env) {
         // ── Ingest (JSMPEG) ─────────────────────────────────────
         jsmpeg: {
             // Public port for both the MPEG-TS HTTP POST from the broadcaster's ffmpeg and the
-            // WebSocket viewers. Live's relay owns 9710/9711 until the JSMPEG cutover; OpenRe
+            // WebSocket viewers. Live's relay owns 9710/9711 until the JSMPEG cutover; OpenRestream
             // listens on 9736 until then, SO_REUSEPORT so two generations can listen during a drain.
             port: jsmpegPort,
             bindHost: env.OPENRE_JSMPEG_BIND || '0.0.0.0',
@@ -113,11 +113,11 @@ function load(env = process.env) {
         // ── Ingest (WebRTC: WHIP + the mediasoup SFU + viewer signaling) ──
         // One worker kind 'webrtc' owns WHIP ingest, the mediasoup producers/consumers and viewer
         // signaling (T4 decision 1: mediasoup is single-process, so ingest and consumption cannot be
-        // split). Live's own SFU keeps UDP 10000–10100 until the WebRTC cutover; OpenRe listens on
+        // split). Live's own SFU keeps UDP 10000–10100 until the WebRTC cutover; OpenRestream listens on
         // 10200–10300 (decision 3) so both stacks run side by side.
         webrtc: {
             // Public HTTP port: WHIP (POST/PATCH/DELETE /whip/…) and the WS signaling endpoints
-            // (broadcaster and viewer). Live's WHIP lives on its app port 3000; OpenRe brings its own.
+            // (broadcaster and viewer). Live's WHIP lives on its app port 3000; OpenRestream brings its own.
             // SO_REUSEPORT so two generations can listen during a drain.
             port: webrtcPort,
             bindHost: env.OPENRE_WEBRTC_BIND || '0.0.0.0',

@@ -1,7 +1,7 @@
 'use strict';
 /**
- * OpenRe identifiers: <prefix>_<ULID> (the ULID from openvibe-contracts ids, so they sort by
- * creation time like every other OpenVibe id). Prefixes are OpenRe's own entity types.
+ * OpenRestream identifiers: <prefix>_<ULID> (the ULID from openvibe-contracts ids, so they sort by
+ * creation time like every other OpenVibe id). Prefixes are OpenRestream's own entity types.
  */
 const { ids } = require('openvibe-contracts');
 
@@ -20,7 +20,7 @@ const RE = Object.fromEntries(Object.entries(PREFIX).map(([k, p]) => [k, new Reg
 
 function newId(kind, now) {
     const p = PREFIX[kind];
-    if (!p) throw new TypeError(`no OpenRe id prefix for "${kind}"`);
+    if (!p) throw new TypeError(`no OpenRestream id prefix for "${kind}"`);
     return `${p}_${ids.ulid(now)}`;
 }
 

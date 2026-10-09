@@ -148,7 +148,7 @@ t('the CLI runs a dry run against a snapshot and prints the checklist', async ()
     const out = execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'migrate-from-live.js'), '--live-db', file], {
         env: { ...process.env, ...env, OPENRE_ENV_FILE: '/nonexistent' }, cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
     });
-    assert.match(out, /OpenRe RTMP cutover checklist \(dry run/);
+    assert.match(out, /OpenRestream RTMP cutover checklist \(dry run/);
     assert.match(out, /@twoslots/);
 });
 

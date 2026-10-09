@@ -1,9 +1,9 @@
 'use strict';
 /**
- * OpenRe → OpenVibe.Events through the openvibe-sdk transactional outbox (ADR-004).
+ * OpenRestream → OpenVibe.Events through the openvibe-sdk transactional outbox (ADR-004).
  *
- * Every OpenRe process can enqueue (the row commits in the same transaction as the change
- * it describes); only the session coordinator runs the relay that publishes rows with OpenRe's
+ * Every OpenRestream process can enqueue (the row commits in the same transaction as the change
+ * it describes); only the session coordinator runs the relay that publishes rows with OpenRestream's
  * service token (audience openvibe.events, capability events.event.publish). Events down, Network
  * down or no credentials yet: rows wait and are retried; nothing in the transport path waits.
  *

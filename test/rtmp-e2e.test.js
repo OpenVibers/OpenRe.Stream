@@ -3,7 +3,7 @@
 // openre-restream-worker and openre-session-coordinator as separate child processes, a stub
 // OpenVibe.Network (token endpoint), a stub OpenVibe.Events and a stub OpenVibe.Media.
 //
-// Proves: ingest with OpenRe's own keys (wrong and duplicate publishers refused), restream to a
+// Proves: ingest with OpenRestream's own keys (wrong and duplicate publishers refused), restream to a
 // working destination while a dead destination fails without touching the session, recording
 // requested from Media with a key-free loopback URL that Media can actually pull, an API restart
 // during the broadcast that ends nothing, HTTP-FLV playback through the new API, a worker
@@ -22,7 +22,7 @@ if (!hasFfmpeg()) {
 }
 
 if (!multiProcess()) {
-    console.log('rtmp-e2e: skipped (the four OpenRe processes share one database: PostgreSQL only, npm run test:pg)');
+    console.log('rtmp-e2e: skipped (the four OpenRestream processes share one database: PostgreSQL only, npm run test:pg)');
     process.exit(0);
 }
 const t = suite('rtmp-e2e');
@@ -74,7 +74,7 @@ let pubA;
 let sessionA;
 let sink;
 
-t('setup: stubs and the four OpenRe processes', async () => {
+t('setup: stubs and the four OpenRestream processes', async () => {
     const network = await stubServer((req, res, body) => {
         if (req.url === '/oauth/token') {
             const p = new URLSearchParams(body);
@@ -263,10 +263,10 @@ t('events reached OpenVibe.Events through the outbox relay, without keys', async
     assert.deepStrictEqual(started.payload.external_refs.map(r => `${r.service}:${r.type}:${r.id}`), ['live:managed_stream:5', 'live:user:42']);
 });
 
-t('no OpenRe process crashed along the way', () => {
+t('no OpenRestream process crashed along the way', () => {
     assert.strictEqual(coordinator.exitCode, null, `coordinator exited:\n${coordinator.output}`);
     assert.strictEqual(api.exitCode, null, `api exited:\n${api.output}`);
-    assert.strictEqual(ingest2.exitCode, null, `generation 2 exited:\n${ingest2.output}`);    // No ingest or destination key in any OpenRe process log.
+    assert.strictEqual(ingest2.exitCode, null, `generation 2 exited:\n${ingest2.output}`);    // No ingest or destination key in any OpenRestream process log.
     for (const p of procs) {
         if (!p.output) continue;
         assert.ok(!p.output.includes(keyA), 'no ingest key in logs');

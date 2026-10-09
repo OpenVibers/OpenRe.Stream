@@ -3,7 +3,7 @@
  * The standalone UI (openre.stream). Server-rendered, useful without JavaScript, forms post back
  * to the same process and go through the same store rules as the API.
  *
- *   /                         what OpenRe is, and the signed-in owner's streams
+ *   /                         what OpenRestream is, and the signed-in owner's streams
  *   /streams                  definitions + create
  *   /streams/:id              ingest URL, keys (rotate: the new key is shown once), settings,
  *                             destinations (add, edit, delete, test, start, stop), sessions
@@ -43,7 +43,7 @@ function createUiRouter({ rt, auth, limits = null }) {
         if (req.caller.kind === 'user' && req.caller.subject) return true;
         page(req, res, {
             title: 'Sign in', canonicalPath: req.path,
-            body: `<h1>Sign in</h1><p>OpenRe.Stream uses your OpenVibe account.</p><p><a href="/auth/login?next=${encodeURIComponent(req.originalUrl)}">Sign in with OpenVibe</a></p>`,
+            body: `<h1>Sign in</h1><p>OpenRestream uses your OpenVibe account.</p><p><a href="/auth/login?next=${encodeURIComponent(req.originalUrl)}">Sign in with OpenVibe</a></p>`,
         }, 401);
         return false;
     }
@@ -84,17 +84,17 @@ function createUiRouter({ rt, auth, limits = null }) {
 
     // ── Pages ─────────────────────────────────────────────────
 
-    // What shipped on OpenRe.Stream: the shared update log every OpenVibe site has.
-    router.get('/updates', (req, res) => page(req, res, { canonicalPath: '/updates', robots: 'index,follow', title: 'What shipped on OpenRe.Stream', body: frame.updatesBody({ service: 'openre', siteName: 'OpenRe.Stream' }) + `<script src="${ovServe.url('shipped.js')}" defer></script>` }));
+    // What shipped on OpenRestream: the shared update log every OpenVibe site has.
+    router.get('/updates', (req, res) => page(req, res, { canonicalPath: '/updates', robots: 'index,follow', title: 'What shipped on OpenRestream', body: frame.updatesBody({ service: 'openre', siteName: 'OpenRestream' }) + `<script src="${ovServe.url('shipped.js')}" defer></script>` }));
     router.get('/', async (req, res) => {
         const signedIn = req.caller.kind === 'user' && req.caller.subject;
         const mine = signedIn ? await store.definitions.list({ owner_subject: req.caller.subject }) : [];
         page(req, res, {
             canonicalPath: '/', robots: 'index,follow', styles: [showcase.STYLESHEET],
-            description: 'Go live from your browser with no OBS and no follower minimum on OpenVibe.Live, or restream an OBS feed to your other channels with OpenRe.Stream.',
+            description: 'Go live from your browser with no OBS and no follower minimum on OpenVibe.Live, or restream an OBS feed to your other channels with OpenRestream.',
             body: `${frontPage(config)}
 ${signedIn ? `<h2>Your streams</h2>${mine.length ? await streamTable(mine) : '<p class="muted">No streams yet.</p>'}<p><a href="/streams">Manage streams</a></p>` : '<p><a href="/auth/login?next=/streams">Sign in with OpenVibe</a> to manage your streams.</p>'}
-${frame.shipped({ service: 'openre', title: 'Recently shipped on OpenRe.Stream' })}`,
+${frame.shipped({ service: 'openre', title: 'Recently shipped on OpenRestream' })}`,
         });
     });
 
@@ -106,9 +106,9 @@ ${frame.shipped({ service: 'openre', title: 'Recently shipped on OpenRe.Stream' 
     function frontPage(cfg) {
         const live = cfg.liveUrl;
         return showcase.hero({
-            eyebrow: 'OpenRe.Stream · alpha',
+            eyebrow: 'OpenRestream · alpha',
             title: 'Go live from your browser.', accent: 'No OBS, no follower minimum.',
-            lede: 'Open OpenVibe.Live, press Go Live and allow your camera: nothing to install, and no follower or subscriber threshold. OpenRe.Stream is the ingest and restream service behind it. With an encoder such as OBS, it takes your RTMP feed and sends the session on to your other channels.',
+            lede: 'Open OpenVibe.Live, press Go Live and allow your camera: nothing to install, and no follower or subscriber threshold. OpenRestream is the ingest and restream service behind it. With an encoder such as OBS, it takes your RTMP feed and sends the session on to your other channels.',
             actions: [
                 { label: 'Go live in your browser', href: live, primary: true },
                 { label: 'Restream with OBS', href: '/streams' },
@@ -116,7 +116,7 @@ ${frame.shipped({ service: 'openre', title: 'Recently shipped on OpenRe.Stream' 
             ],
             note: 'Alpha. RTMP ingest and RTMP/SRT restreaming run here today; browser (WHIP) and JSMPEG ingest are still served by OpenVibe.Live. Channels, discovery and watch pages stay on openvibe.live.',
         }) + showcase.features({
-            title: 'What OpenRe does',
+            title: 'What OpenRestream does',
             items: [
                 { icon: 'ov:stream', title: 'Ingest keys you control', text: 'Create a stream and get its RTMP server and key. The key is shown once, stored only as a hash, and can be rotated any time.' },
                 { icon: 'ov:live', title: 'One stream, several channels', text: 'Send a session to several RTMP or SRT destinations at once, each with its own health, logs and retry with backoff.' },
@@ -162,7 +162,7 @@ ${frame.shipped({ service: 'openre', title: 'Recently shipped on OpenRe.Stream' 
         page(req, res, {
             title: heading, canonicalPath: `/streams/${definition.id}`,
             body: `<h1>${esc(heading)}</h1>
-<div class="card"><p><strong>Copy the key now.</strong> OpenRe stores only a hash of it; this page is the only time it is shown.</p>
+<div class="card"><p><strong>Copy the key now.</strong> OpenRestream stores only a hash of it; this page is the only time it is shown.</p>
 <label>Server (OBS: Settings → Stream → Custom)</label><code class="secret">${esc(ep.rtmp ? ep.rtmp.url : '')}</code>
 <label>Stream key</label><code class="secret">${esc(key.key)}</code></div>
 <p><a href="/streams/${esc(definition.id)}">Continue to the stream</a></p>`,
@@ -217,7 +217,7 @@ ${dests.length ? `<table><tr><th>Destination</th><th>Output</th><th>Health</th><
 <div><label>Recording visibility</label><select name="recording_visibility">${['public', 'unlisted', 'private'].map(m => `<option${d.recording_visibility === m ? ' selected' : ''}>${m}</option>`).join('')}</select></div>
 <div><label>Playback</label><select name="playback_visibility">${['public', 'unlisted', 'private'].map(m => `<option${d.playback_visibility === m ? ' selected' : ''}>${m}</option>`).join('')}</select></div>
 <div><label>State</label><select name="state">${['active', 'disabled'].map(m => `<option${d.state === m ? ' selected' : ''}>${m}</option>`).join('')}</select></div></div>
-<label><input type="checkbox" name="mirror_to_live" value="1"${d.mirror_to_live ? ' checked' : ''}> Mirror sessions into my OpenVibe.Live channel (consent; Live also has to switch this slot to OpenRe)</label>
+<label><input type="checkbox" name="mirror_to_live" value="1"${d.mirror_to_live ? ' checked' : ''}> Mirror sessions into my OpenVibe.Live channel (consent; Live also has to switch this slot to OpenRestream)</label>
 <button type="submit">Save</button>`)}</div>
 <h2>Sessions</h2>${sessionTable(sessions)}`,
         });

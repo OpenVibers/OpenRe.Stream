@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * Disable (or re-enable) the OpenRe stream definition of one Live slot, AS LIVE (docs/cutover.md,
+ * Disable (or re-enable) the OpenRestream stream definition of one Live slot, AS LIVE (docs/cutover.md,
  * per-slot rollback). A disabled definition's keys are refused at the RTMP handshake
- * (`stream_disabled`), so after a slot goes back to Live nobody can publish to OpenRe with the key
- * the broadcaster got at the cutover, and OpenRe never pushes that slot's destinations. Running
+ * (`stream_disabled`), so after a slot goes back to Live nobody can publish to OpenRestream with the key
+ * the broadcaster got at the cutover, and OpenRestream never pushes that slot's destinations. Running
  * sessions are not ended (Live holds no openre.session.end grant): do it with the slot offline.
  *
  *   sudo node /opt/openre.stream/current/scripts/set-definition-state.js --slot 12 --state disabled
@@ -38,9 +38,9 @@ async function run({ slot, state, env, fetchImpl = globalThis.fetch, log = conso
     const ref = `live:managed_stream:${slot}`;
     const found = await fetchImpl(`${openre}/api/v1/streams?external_ref=${encodeURIComponent(ref)}`, { headers, signal: AbortSignal.timeout(15000) });
     const list = await readJson(found);
-    if (!found.ok) throw new Error(`OpenRe answered ${found.status}: ${list.code || ''} ${list.detail || ''}`.trim());
+    if (!found.ok) throw new Error(`OpenRestream answered ${found.status}: ${list.code || ''} ${list.detail || ''}`.trim());
     const d = (list.streams || [])[0];
-    if (!d) throw new Error(`OpenRe has no stream definition for ${ref}`);
+    if (!d) throw new Error(`OpenRestream has no stream definition for ${ref}`);
     if (d.state === state) {
         log(`${d.id} (${ref}) is already ${state}`);
         return { id: d.id, state, changed: false, open_session: d.session ? d.session.id : null };
@@ -52,7 +52,7 @@ async function run({ slot, state, env, fetchImpl = globalThis.fetch, log = conso
         signal: AbortSignal.timeout(15000),
     });
     const b = await readJson(r);
-    if (!r.ok) throw new Error(`OpenRe answered ${r.status}: ${b.code || ''} ${b.detail || ''}`.trim());
+    if (!r.ok) throw new Error(`OpenRestream answered ${r.status}: ${b.code || ''} ${b.detail || ''}`.trim());
     log(`${d.id} (${ref}): ${d.state} → ${b.stream ? b.stream.state : state}${d.session ? `; session ${d.session.id} is still ${d.session.state} (not ended by this)` : ''}`);
     return { id: d.id, state: b.stream ? b.stream.state : state, changed: true, open_session: d.session ? d.session.id : null };
 }

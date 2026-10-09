@@ -2,7 +2,7 @@
 /**
  * Two kinds of secret, handled differently:
  *
- * Ingest keys (what a streamer pastes into OBS) are OpenRe's own credentials. Only their SHA-256
+ * Ingest keys (what a streamer pastes into OBS) are OpenRestream's own credentials. Only their SHA-256
  * is stored; the plain key exists once, in the response that created or rotated it. 256 bits of
  * randomness make a plain digest safe (no dictionary to try), and lookup stays one indexed read,
  * which matters because the RTMP worker authenticates synchronously inside the publish handshake.

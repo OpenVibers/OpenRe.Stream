@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * Live's OpenVibe.Events subscription to OpenRe's session events (docs/cutover.md step A5):
+ * Live's OpenVibe.Events subscription to OpenRestream's session events (docs/cutover.md step A5):
  * topic `openre.session.*` → Live's `POST /internal/openre-events`, signed with the secret Live holds
  * as OPENRE_EVENTS_SECRET. Events names the consumer after the calling service, so this runs AS LIVE:
  * it reads Live's env file (Live's OAuth client, grant [live, events.subscription.manage,

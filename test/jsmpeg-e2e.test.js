@@ -22,7 +22,7 @@ if (!hasFfmpeg()) {
     process.exit(0);
 }
 if (!multiProcess()) {
-    console.log('jsmpeg-e2e: skipped (the OpenRe processes share one database: PostgreSQL only, npm run test:pg)');
+    console.log('jsmpeg-e2e: skipped (the OpenRestream processes share one database: PostgreSQL only, npm run test:pg)');
     process.exit(0);
 }
 const t = suite('jsmpeg-e2e');
@@ -90,7 +90,7 @@ let pubA;
 let sink;
 let viewer;
 
-t('setup: stubs and the four OpenRe processes', async () => {
+t('setup: stubs and the four OpenRestream processes', async () => {
     const network = await stubServer((req, res, body) => {
         if (req.url === '/oauth/token') {
             const p = new URLSearchParams(body);
@@ -249,7 +249,7 @@ t('a killed worker fails its session after the lease expires', async () => {
     assert.match(s.failure_reason, /lease|lost|expired/i);
 });
 
-t('no OpenRe process crashed along the way, and no key reached a log', () => {
+t('no OpenRestream process crashed along the way, and no key reached a log', () => {
     assert.strictEqual(coordinator.exitCode, null, `coordinator exited:\n${coordinator.output}`);
     assert.strictEqual(api.exitCode, null, `api exited:\n${api.output}`);
     for (const p of procs) {

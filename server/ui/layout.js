@@ -6,7 +6,7 @@ const ovServe = require('openvibe-shared/serve');
  * pinned openvibe-shared release) the way OpenVibe.Community renders it.
  */
 const NETWORK_URL = 'https://openvibe.network';
-const SITE = 'OpenRe.Stream';
+const SITE = 'OpenRestream';
 
 function esc(v) {
     return String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -34,7 +34,7 @@ main.ore{max-width:1040px;margin:0 auto;padding:24px 16px 64px}
 @media (max-width:640px){.ore th:nth-child(n+4),.ore td:nth-child(n+4){display:none}}
 `;
 
-const DESCRIPTION = 'OpenRe.Stream: stream definitions, ingest keys, sessions and restream outputs for the OpenVibe network.';
+const DESCRIPTION = 'OpenRestream: stream definitions, ingest keys, sessions and restream outputs for the OpenVibe network.';
 
 function renderPage({ title, body, user, canonicalPath = '/', robots = 'noindex,nofollow', config, description = DESCRIPTION, styles = [] }) {
     const pageTitle = title ? `${title} · ${SITE}` : `${SITE} — ingest and restream for OpenVibe`;
@@ -51,7 +51,7 @@ function renderPage({ title, body, user, canonicalPath = '/', robots = 'noindex,
         notificationsRealtime: true,   // the bell hears new notifications over OpenVibe.Events (Shared 1.22.0)
     };
     const foot = { service: 'openre', variant: 'compact', mount: '#ov-footer', brandName: SITE, legalBase: config.liveUrl, updates: '/updates',
-        links: [{ heading: SITE, items: [{ name: 'Streams', url: '/streams' }, { name: 'Source code', url: 'https://github.com/OpenVibers/OpenRe.Stream' }] }] };
+        links: [{ heading: SITE, items: [{ name: 'Streams', url: '/streams' }, { name: 'Source code', url: 'https://github.com/OpenVibers/OpenRestream' }] }] };
     let footerSsr = '';
     try { footerSsr = require('openvibe-shared/footer').ssr({ service: 'openre', variant: 'compact', updates: '/updates' }); } catch { footerSsr = '<footer id="ov-footer"></footer>'; }
     let icon = '';
@@ -74,7 +74,7 @@ ${styles.map((name) => `<link rel="stylesheet" href="${esc(ovServe.url(name))}">
 </head>
 <body>
 <div id="navbar-mount"></div>
-<noscript><nav class="ore" style="padding:8px 16px"><a href="/">OpenRe.Stream</a> · <a href="/streams">Streams</a> · <a href="/sessions">Sessions</a> · ${user ? '<a href="/auth/logout">Sign out</a>' : '<a href="/auth/login">Sign in</a>'}</nav></noscript>
+<noscript><nav class="ore" style="padding:8px 16px"><a href="/">OpenRestream</a> · <a href="/streams">Streams</a> · <a href="/sessions">Sessions</a> · ${user ? '<a href="/auth/logout">Sign out</a>' : '<a href="/auth/login">Sign in</a>'}</nav></noscript>
 <main id="main" class="ore">
 ${body}
 </main>

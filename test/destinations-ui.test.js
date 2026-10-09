@@ -53,7 +53,7 @@ t('the UI works without JavaScript: landing, sign-in prompt, streams', async () 
     api = await bootApi();
     const home = await request(api.base, 'GET', '/');
     assert.strictEqual(home.status, 200);
-    assert.match(home.text, /OpenRe\.Stream/);
+    assert.match(home.text, /OpenRestream/);
     assert.match(home.text, /theme-loader\.js/);
     assert.match(home.text, /<noscript><nav/);
     const signin = await request(api.base, 'GET', '/streams');

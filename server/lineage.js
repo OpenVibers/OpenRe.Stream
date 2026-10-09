@@ -1,8 +1,8 @@
 'use strict';
 /**
- * Live lineage for OpenRe definitions (roadmap D20): which OpenVibe.Live channel a stream belongs to,
+ * Live lineage for OpenRestream definitions (roadmap D20): which OpenVibe.Live channel a stream belongs to,
  * answered by Live's canonical resolver (GET /internal/lineage/resolve, capability live.lineage.resolve,
- * OpenRe's Network service token for audience openvibe.live) instead of a mapping of OpenRe's own.
+ * OpenRestream's Network service token for audience openvibe.live) instead of a mapping of OpenRestream's own.
  * A definition is asked about when it mirrors into Live or points at a Live slot (external ref
  * live:managed_stream), with its owner subject and that slot id; display names are never sent.
  *

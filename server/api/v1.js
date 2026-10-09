@@ -1,6 +1,6 @@
 'use strict';
 /**
- * OpenRe API v1 (openre-api). Every route checks one capability for service callers; owners
+ * OpenRestream API v1 (openre-api). Every route checks one capability for service callers; owners
  * (Network user JWT) act on their own streams. Errors are RFC 9457 problem+json.
  *
  *   GET    /api/v1/streams                      openre.stream.read     list (owner, ?external_ref=live:managed_stream:12)
