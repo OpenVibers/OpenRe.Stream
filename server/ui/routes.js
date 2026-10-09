@@ -124,7 +124,9 @@ ${frame.shipped({ service: 'openre', title: 'Recently shipped on OpenRestream' }
                 { icon: 'ov:live', title: 'One stream, every platform', text: 'Twitch, YouTube, Kick and any RTMP, RTMPS or SRT server at once. Each destination has its own health, logs and retries.' },
                 { icon: 'ov:stream', title: 'OpenVibe Live on by default', text: 'Every stream also goes live on your openvibe.live channel, with chat, clips and VODs. Switch it off for any stream.' },
                 { icon: 'ov:check', title: 'Keys you control', text: 'Each stream has its own RTMP key, shown once and stored only as a hash. Rotate it any time.' },
-                { icon: 'ov:video', title: 'Free, open, no minimum', text: 'Any OpenVibe account can restream from the first minute: no follower, subscriber or eligibility threshold, and the code is on GitHub.' },
+                { icon: 'ov:video', title: 'Recording', text: 'Per stream: record a VOD, keep clips only, or record nothing. OpenVibe.Media keeps the recordings.' },
+                { icon: 'ov:code', title: 'Open API and SDK', text: 'Streams, keys, sessions and destinations through the OpenVibe API and SDK, for your own tools and bots.' },
+                { icon: 'ov:community', title: 'Free, open, no minimum', text: 'Any OpenVibe account can restream from the first minute: no follower, subscriber or eligibility threshold, and the code is on GitHub.' },
             ],
         }) + showcase.steps({
             title: 'Restream with OBS',
