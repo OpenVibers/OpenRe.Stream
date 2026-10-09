@@ -32,7 +32,10 @@ async function testDestination(dest, { allowPrivate = false, lookup, probe = tcp
         checks.push({ check: 'connect', ok: true, detail: 'SRT is UDP; the receiver is only reached when an output runs' });
     } else {
         const port = Number(v.url.port) || (v.url.protocol === 'rtmps:' ? 443 : 1935);
-        const p = await probe(v.host, port);
+        // Connect to the address that was just checked, never the name again: a name with a zero TTL could answer
+        // a public address to the check and a loopback one to the connect (DNS rebinding, a port-scan oracle).
+        const target = r.addresses[0] || v.host;
+        const p = await probe(target, port);
         checks.push({ check: 'connect', ok: p.ok, detail: p.ok ? `TCP ${v.host}:${port} answered in ${p.ms} ms` : p.error });
     }
     return { ok: checks.every(c => c.ok), checks };

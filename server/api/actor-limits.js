@@ -1,5 +1,5 @@
 /**
- * Per-actor limits on the ingest API's writes (roadmap WS-R task 4; openvibe-sdk/limits).
+ * Per-actor limits on the ingest API's writes and the signed-in pages' form posts (roadmap WS-R task 4; openvibe-sdk/limits).
  *
  * A signed-in person (req.caller.kind === 'user') is counted by subject. Service callers are not: Live manages every
  * streamer's ingest with its service token, so counting svc:live as one caller would refuse the whole site; their
@@ -14,10 +14,14 @@ const { createActorLimiter, createValkeyLimitStore } = require('openvibe-sdk/lim
 
 const num = (v, d) => { const n = parseInt(v, 10); return Number.isFinite(n) && n > 0 ? n : d; };
 
-/** [name, method regex, path regex (relative to /api/v1), { minute, hour }]; the first match wins. */
+/**
+ * [name, method regex, path regex, { minute, hour }]; the first match wins. The paths are the API's (relative to /api/v1)
+ * and the signed-in pages' (the same limiter guards both, so one person has one budget): the page rotates a key at
+ * /streams/:id/rotate.
+ */
 const ROUTES = [
     // A rotation invalidates the key every encoder uses.
-    ['openre.key.rotate', /^POST$/, /^\/streams\/[^/]+\/keys\/rotate$/, { minute: 5, hour: 20 }],
+    ['openre.key.rotate', /^POST$/, /^\/streams\/[^/]+\/(keys\/)?rotate$/, { minute: 5, hour: 20 }],
     // A test opens a connection to someone else's server.
     ['openre.destination.test', /^POST$/, /^\/destinations\/[^/]+\/test$/, { minute: 10, hour: 100 }],
     ['openre.stream.create', /^POST$/, /^\/streams\/?$/, { minute: 10, hour: 100 }],

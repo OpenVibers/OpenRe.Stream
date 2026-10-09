@@ -50,6 +50,26 @@ function buildSrtUrl(base, dest) {
     return u.toString();
 }
 
+/**
+ * Pin an output to the address its host was checked against (DNS rebinding guard): ffmpeg would otherwise resolve the
+ * name again when it connects, and a name with a zero TTL could answer a loopback or private address then. rtmp:// and
+ * srt:// carry no name past the connect, so the host becomes the address; RTMP keeps the name in its tcUrl
+ * (`-rtmp_tcurl`), as a server that routes by it expects. rtmps:// is left as it is: TLS needs the name (SNI), and
+ * a rebound name only ever receives a TLS ClientHello. Returns { url, extra } (extra goes before the output URL).
+ */
+function pinDestUrl(destUrl, address) {
+    const s = String(destUrl || '');
+    const m = /^(rtmp|srt):\/\/(\[[^\]]+\]|[^/:?#]+)(:\d+)?([/?].*)?$/i.exec(s);
+    if (!address || !m) return { url: s, extra: [] };
+    const [, proto, , port, rest = ''] = m;
+    const host = address.includes(':') ? `[${address}]` : address;
+    const url = `${proto}://${host}${port || ''}${rest}`;
+    if (proto.toLowerCase() !== 'rtmp') return { url, extra: [] };
+    // ffmpeg's own tcUrl is proto://host:port/app; the app is the path before the stream key.
+    const app = rest.slice(1, Math.max(rest.lastIndexOf('/'), 0));
+    return { url, extra: ['-rtmp_tcurl', `rtmp://${m[2]}${port || ':1935'}/${app}`] };
+}
+
 function outputArgs(destUrl) {
     const common = ['-muxdelay', '0', '-muxpreload', '0', '-flush_packets', '1', '-max_muxing_queue_size', '4096'];
     if (isSrtUrl(destUrl)) return [...common, '-f', 'mpegts', '-mpegts_flags', '+resend_headers', destUrl];
@@ -190,5 +210,5 @@ function redactUrl(value) {
 
 module.exports = {
     QUALITY_PRESETS, PLATFORM_DEFAULT_PRESET, ENCODER_PRESETS, SRT_DEFAULT_LATENCY_MS,
-    isSrtUrl, buildDestUrl, buildSrtUrl, outputArgs, rtmpCopyArgs, jsmpegArgs, webrtcArgs, rtpInputArgs, withProgress, resolvePreset, customOverrides, encodingArgs, friendlyError, redactUrl, redactText,
+    isSrtUrl, buildDestUrl, buildSrtUrl, pinDestUrl, outputArgs, rtmpCopyArgs, jsmpegArgs, webrtcArgs, rtpInputArgs, withProgress, resolvePreset, customOverrides, encodingArgs, friendlyError, redactUrl, redactText,
 };

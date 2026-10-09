@@ -21,7 +21,9 @@ const STATE = 'ov_oauth_state';
 const NEXT = 'ov_oauth_next';
 
 function sanitizeNext(next) {
-    if (typeof next === 'string' && /^\/(?!\/|\\)/.test(next)) return next;
+    // Browsers drop tabs and newlines and read \ as /, so "/<TAB>/evil.com" or "/\\evil.com" would leave the site.
+    if (typeof next === 'string' && /[\u0000-\u001f\u007f\\]/.test(next)) return '/';
+    if (typeof next === 'string' && /^\/(?!\/)/.test(next)) return next;
     return '/';
 }
 

@@ -2,7 +2,7 @@
 
 > Ingest and restream: stream definitions, keys, sessions, transport workers, outputs and output health.
 
-**Status:** alpha (roadmap Wave 7). Tested end to end with real RTMP. Deployed internally on `openvibe-ovh` since 2026-09-23 (API and coordinator on 127.0.0.1:4500; RTMP ingest public on port 1936 at `ingest.openre.stream` since the cutover runbook's phase A on 2026-09-23; Live wired with `OPENRE_URL` and an `openre.session.*` subscription; one rehearsal broadcast passed), but not launched: no broadcaster uses it, since every Live slot is still ingested by Live until its per-slot cutover (`docs/cutover.md` phase B). The domain keeps its placeholder page on OpenVibe.Sites until the launch rule below is met.
+**Status:** alpha (roadmap Wave 7). Tested end to end with real RTMP. Deployed internally on `openvibe-ovh` since 2026-09-23 (API and coordinator on 127.0.0.1:4500; RTMP ingest public on port 1936 at `ingest.openre.stream` since the cutover runbook's phase A on 2026-09-23; Live wired with `OPENRE_URL` and an `openre.session.*` subscription; one rehearsal broadcast passed). **openre.stream serves its own site since 2026-10-09** (plan T11, cutover step B0 (a)): sign in with OpenVibe, create a stream with its RTMP key, and send it to other channels. No Live slot is ingested here yet: every slot is still ingested by Live until its per-slot cutover (`docs/cutover.md` phase B).
 **Domain:** `openre.stream` (UI + API), `ingest.openre.stream` (RTMP, DNS only)
 **Plan:** OpenVibe End-to-End Realignment & Implementation Plan, revision 3 (20 Sep 2026), §10, §10.5, §15.10; ADR-009 (binding), ADR-004, ADR-006, ADR-007.
 **License:** AGPL-3.0 (same as every OpenVibe service).
@@ -276,8 +276,10 @@ JavaScript; real persistence and end-to-end workflows; capability and event regi
 sitemap/robots/feed behaviour; acceptance tests proving the advertised functionality. Today the
 runtime, identity integration, server-rendered routes, persistence, capability registration (contracts v0.16.0),
 the migration strategy and the acceptance tests are in place, and the service is deployed
-internally with its public ingest port open. An independent security review and the first slot
-cutover are not.
+internally with its public ingest port open. The independent security review was done on 2026-10-09: its
+fixes pin each restream output and destination test to the address that was checked (DNS rebinding), refuse
+control characters in sign-in's `next`, rate-limit the signed-in pages' posts and deny framing
+(`test/launch-hardening.test.js`). The site launched the same day; the first slot cutover is still to come.
 
 ---
 

@@ -11,7 +11,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const dgram = require('dgram');
-const { rtmpCopyArgs, jsmpegArgs, webrtcArgs, withProgress, buildDestUrl, resolvePreset, customOverrides, friendlyError, redactUrl, redactText } = require('./ffmpeg-args');
+const { rtmpCopyArgs, jsmpegArgs, webrtcArgs, withProgress, buildDestUrl, pinDestUrl, resolvePreset, customOverrides, friendlyError, redactUrl, redactText } = require('./ffmpeg-args');
 const { validateDestinationUrl, checkResolvedHost } = require('../../server/destination-url');
 
 /** A free even UDP port (the WebRTC source's ffmpeg takes it and its +1 for RTCP). */
@@ -96,7 +96,7 @@ class OutputRunner {
             // No source yet (the producer has not appeared): retry with the usual backoff.
             if (!prep.ok) return this.scheduleRestart(0, prep.error);
         }
-        this.spawn(destUrl);
+        this.spawn(destUrl, resolved.addresses[0]);
     }
 
     /**
@@ -130,12 +130,14 @@ class OutputRunner {
         if (this.sdpPath) { try { fs.unlinkSync(this.sdpPath); } catch { /* gone */ } this.sdpPath = null; }
     }
 
-    spawn(destUrl) {
+    spawn(destUrl, address = null) {
+        const pinned = pinDestUrl(destUrl, address);
         const args = withProgress(this.source === 'jsmpeg'
-            ? jsmpegArgs(this.inputUrl, destUrl, this.preset || resolvePreset({}), this.overrides ? { overrides: this.overrides } : {})
+            ? jsmpegArgs(this.inputUrl, pinned.url, this.preset || resolvePreset({}), this.overrides ? { overrides: this.overrides } : {})
             : this.source === 'webrtc'
-                ? webrtcArgs(this.sdpPath, destUrl, this.preset || resolvePreset({}), { hasAudio: this.hasAudio, overrides: this.overrides || {} })
-                : rtmpCopyArgs(this.inputUrl, destUrl));
+                ? webrtcArgs(this.sdpPath, pinned.url, this.preset || resolvePreset({}), { hasAudio: this.hasAudio, overrides: this.overrides || {} })
+                : rtmpCopyArgs(this.inputUrl, pinned.url));
+        if (pinned.extra.length) args.splice(args.lastIndexOf(pinned.url), 0, ...pinned.extra);
         const rtmps = destUrl.startsWith('rtmps://');
         const bin = rtmps && this.o.ffmpegOpenSslPath && fs.existsSync(this.o.ffmpegOpenSslPath) ? this.o.ffmpegOpenSslPath : this.o.ffmpegPath;
         this.note('info', `starting ffmpeg → ${redactUrl(destUrl)}${bin !== this.o.ffmpegPath ? ' (openssl build)' : ''}`);

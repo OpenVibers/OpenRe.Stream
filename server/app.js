@@ -29,6 +29,9 @@ function createApp({ rt, auth, keys, log = console, fetchImpl }) {
     app.use((req, res, next) => {
         res.setHeader('X-Content-Type-Options', 'nosniff');
         res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+        // No page is meant to be framed: a framed form carries the session and its CSRF token (clickjacking).
+        res.setHeader('X-Frame-Options', 'DENY');
+        res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
         next();
     });
     app.use(cookieParser());
@@ -152,7 +155,7 @@ function createApp({ rt, auth, keys, log = console, fetchImpl }) {
     app.use('/auth', createSsoRoutes({ config, auth, fetchImpl }));
     // Crawl and machine-readability artifacts (robots.txt, sitemap.xml, llms.txt): openvibe-shared/seo.
     app.use('/', createDiscoveryRoutes({ config }));
-    app.use('/', createUiRouter({ rt, auth }));
+    app.use('/', createUiRouter({ rt, auth, limits: actorLimits }));
 
     app.use((req, res) => contracts.http.sendProblem(res, 404, 'openre.not_found', { detail: `no route ${req.method} ${req.path}`, ctx: req.ov }));
     // eslint-disable-next-line no-unused-vars
