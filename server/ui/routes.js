@@ -27,11 +27,13 @@ const pill = (state) => `<span class="pill ${esc(state)}">${esc(state)}</span>`;
 
 function csrfFor(token) { return crypto.createHash('sha256').update(`openre-csrf:${token}`).digest('hex').slice(0, 32); }
 
-function createUiRouter({ rt, auth }) {
+function createUiRouter({ rt, auth, limits = null }) {
     const { store, config } = rt;
     const router = express.Router();
     router.use(express.urlencoded({ extended: false, limit: '64kb' }));
     router.use(auth.middleware({ services: false }));
+    // The API's per-person limits count these form posts too (a test, a new stream, a rotation): one budget per person.
+    if (limits) router.use(limits);
 
     const page = (req, res, o, status = 200) => res.status(status).type('html').send(renderPage({ ...o, user: req.caller.kind === 'user' ? req.caller : null, config }));
     const csrfField = (req) => `<input type="hidden" name="_csrf" value="${esc(csrfFor(req.caller.token))}">`;
