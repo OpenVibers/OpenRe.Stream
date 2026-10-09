@@ -1,5 +1,5 @@
 [Unit]
-Description=OpenRe.Stream API and UI (openre-api): definitions, keys, destinations, sessions, playback proxy
+Description=OpenRestream API and UI (openre-api): definitions, keys, destinations, sessions, playback proxy
 # The API owns no transport. Restarting it (every API deploy) never touches the transport
 # workers: they are separate units with no dependency on this one, in either direction.
 After=network.target postgresql.service pgbouncer.service valkey-server.service

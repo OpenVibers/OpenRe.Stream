@@ -1,13 +1,13 @@
 'use strict';
 /**
  * Import OpenVibe.Live stream slots (managed_streams) and their restream destinations from a
- * read-only snapshot of Live's database into OpenRe (scripts/migrate-from-live.js is the CLI).
+ * read-only snapshot of Live's database into OpenRestream (scripts/migrate-from-live.js is the CLI).
  *
  * Rules (ADR-009, plan §8.1):
  *   - Live's database is opened read-only; nothing is written to it.
- *   - Stream keys are NEVER imported. Every imported slot gets a new OpenRe key that nobody has
+ *   - Stream keys are NEVER imported. Every imported slot gets a new OpenRestream key that nobody has
  *     seen; the streamer gets a usable key by rotating (Live's "Regenerate" once the slot is
- *     switched to OpenRe, or openre.stream). Every key that existed before the cutover is dead
+ *     switched to OpenRestream, or openre.stream). Every key that existed before the cutover is dead
  *     at the cutover.
  *   - Every source row is imported, held with a reason, or excluded with a reason, and recorded in
  *     migration_map. Re-running is idempotent: imported rows are skipped, held rows are retried.
@@ -165,7 +165,7 @@ async function migrate({ liveDb, rt, apply = false, onlySlots = null, now = () =
                 continue;
             }
             const v = validateDestinationUrl(d.server_url, { allowPrivate: config.outputs.allowPrivateHosts });
-            const hold = !v.ok ? `server URL refused by OpenRe's destination rules: ${v.error}` : null;
+            const hold = !v.ok ? `server URL refused by OpenRestream's destination rules: ${v.error}` : null;
             const input = {
                 platform: ['youtube', 'twitch', 'kick', 'custom'].includes(d.platform) ? d.platform : 'custom',
                 name: d.name || null,
@@ -198,7 +198,7 @@ async function migrate({ liveDb, rt, apply = false, onlySlots = null, now = () =
             count(hold ? 'held' : 'imported');
         }
         if (own.some(d => d.connection_id) || unbound.some(d => d.connection_id)) {
-            ch.notes.push('OAuth-linked destination(s): Live refreshed their ingest key (and created the YouTube broadcast) on every go-live; OpenRe pushes to the key stored at import. Check the platform key is a persistent one, or re-enter it on openre.stream after the cutover.');
+            ch.notes.push('OAuth-linked destination(s): Live refreshed their ingest key (and created the YouTube broadcast) on every go-live; OpenRestream pushes to the key stored at import. Check the platform key is a persistent one, or re-enter it on openre.stream after the cutover.');
         }
     }
     return report;
@@ -207,7 +207,7 @@ async function migrate({ liveDb, rt, apply = false, onlySlots = null, now = () =
 /** Markdown checklist per channel, for the lead and the broadcaster. Contains no secret. */
 function checklist(report, { openreUrl = 'https://openre.stream', rtmpUrl } = {}) {
     const lines = [];
-    lines.push(`# OpenRe RTMP cutover checklist${report.apply ? '' : ' (dry run: nothing was written)'}`);
+    lines.push(`# OpenRestream RTMP cutover checklist${report.apply ? '' : ' (dry run: nothing was written)'}`);
     lines.push('');
     lines.push(`Imported ${report.counts.imported}, held ${report.counts.held}, excluded ${report.counts.excluded}, already done ${report.counts.skipped}.`);
     lines.push('');

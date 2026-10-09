@@ -2,7 +2,7 @@
 /**
  * WHIP SDP <-> mediasoup bridging, ported from OpenVibe.Live server/streaming/whip-handler.js
  * (offer validation, DTLS parameter extraction, RTP parameter extraction against the router's
- * capabilities, and the answer builder). The Live-specific stream-row code is not ported: OpenRe
+ * capabilities, and the answer builder). The Live-specific stream-row code is not ported: OpenRestream
  * validates the offer, negotiates codecs and builds the answer, and nothing here touches a database.
  *
  * `sdp-transform` is required lazily so the module (and the whole worker) can be loaded — and its
@@ -187,7 +187,7 @@ function extractRtpParameters(media, routerCapabilities, mediaIndex = 0) {
  * BUNDLE group (RFC 8843 §7.3.3), so a browser publisher whose extra section (a data channel, a
  * codec the router lacks) is rejected is not refused by its own SDP parser.
  */
-function buildSdpAnswer(transport, offerSdp, producersByKind, { serverName = 'OpenRe.Stream', fallbackAddress = '127.0.0.1' } = {}) {
+function buildSdpAnswer(transport, offerSdp, producersByKind, { serverName = 'OpenRestream', fallbackAddress = '127.0.0.1' } = {}) {
     const { iceParameters, iceCandidates, dtlsParameters } = transport;
     const fingerprint = selectDtlsFingerprint(dtlsParameters.fingerprints);
     const setup = getDtlsSetupAttribute(offerSdp) === 'passive' ? 'active' : 'passive';
@@ -316,7 +316,7 @@ function buildIceFragment(iceParameters, mirror = {}) {
  * listens on; the worker's PlainRTP consumer is already sending to it.
  */
 function buildEgressSdp({ video, audio } = {}) {
-    const lines = ['v=0', 'o=- 0 0 IN IP4 127.0.0.1', 's=OpenRe.Stream WebRTC egress', 'c=IN IP4 127.0.0.1', 't=0 0'];
+    const lines = ['v=0', 'o=- 0 0 IN IP4 127.0.0.1', 's=OpenRestream WebRTC egress', 'c=IN IP4 127.0.0.1', 't=0 0'];
     const section = (type, c, port) => {
         const pt = c.payloadType;
         const codecName = (c.mimeType || `${type}/VP8`).split('/')[1];

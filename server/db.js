@@ -1,6 +1,6 @@
 'use strict';
 /**
- * OpenRe's durable store: one PostgreSQL database (ov_openre, ADR-035) shared by every OpenRe process.
+ * OpenRestream's durable store: one PostgreSQL database (ov_openre, ADR-035) shared by every OpenRestream process.
  *
  *   openre-api                  definitions, keys, destinations (owner writes)
  *   openre-session-coordinator  worker liveness, drain, output assignment, recordings, event relay
@@ -21,7 +21,7 @@ const DEV_PGLITE = path.join(__dirname, '..', 'data', 'pglite');
 /**
  * The serving handle: DATABASE_URL through PgBouncer, after the migrations ran as the owner (DATABASE_DIRECT_URL).
  * Without DATABASE_URL (development, tests), an embedded PGlite database: in OPENRE_PGLITE_DIR or data/pglite, or in
- * memory with { memory: true }. PGlite is one process: run the other OpenRe processes against PostgreSQL.
+ * memory with { memory: true }. PGlite is one process: run the other OpenRestream processes against PostgreSQL.
  */
 async function openDb(config, { memory = false, log = console, registry } = {}) {
     const quiet = { ...log, info() {}, log() {} };

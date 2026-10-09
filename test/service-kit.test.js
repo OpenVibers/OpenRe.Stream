@@ -1,10 +1,10 @@
 'use strict';
 /**
- * openvibe-sdk/service in OpenRe.Stream (plan T1, lane A): the API's SIGTERM/SIGINT shutdown is the kit's
+ * openvibe-sdk/service in OpenRestream (plan T1, lane A): the API's SIGTERM/SIGINT shutdown is the kit's
  * gracefulStop, not a hand-written handler. The keys poller stops, requests in flight drain for 8 s, then the
  * store closes in today's order (Valkey, then the database); a database close failure exits 1,
  * a clean stop exits 0, and past the 10 s deadline the process exits 1. The static half reads server/index.js;
- * the behavioural half drives gracefulStop with the same options OpenRe passes, exits stubbed.
+ * the behavioural half drives gracefulStop with the same options OpenRestream passes, exits stubbed.
  */
 const assert = require('assert');
 const fs = require('fs');

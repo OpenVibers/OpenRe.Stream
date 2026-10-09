@@ -12,7 +12,7 @@ const { localAddresses, rtmpProbe } = require('../scripts/cutover-preflight');
 const { tmpDir, testEnv, child, waitFor, freePort, suite, silent, multiProcess } = require('./helpers');
 
 if (!multiProcess()) {
-    console.log('bind-switch: skipped (OpenRe processes sharing one database need PostgreSQL: npm run test:pg)');
+    console.log('bind-switch: skipped (OpenRestream processes sharing one database need PostgreSQL: npm run test:pg)');
     process.exit(0);
 }
 const t = suite('bind-switch');

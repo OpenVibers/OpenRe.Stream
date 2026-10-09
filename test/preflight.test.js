@@ -1,6 +1,6 @@
 'use strict';
 // scripts/cutover-preflight.js against a mocked host: files, commands, DNS, interfaces, the port
-// probe and /api/ready are fakes; OpenRe's database is a real PostgreSQL one (PGlite) read in READ ONLY transactions,
+// probe and /api/ready are fakes; OpenRestream's database is a real PostgreSQL one (PGlite) read in READ ONLY transactions,
 // Events' and Live's are real SQLite files opened read-only (Events' production PostgreSQL has the same tables).
 // Covers the host as it is today (2026-09-23: everything the cutover still needs fails), a host
 // ready for the first slot, each failure on its own, the off-host port check, the probe URL, the
@@ -27,7 +27,7 @@ const LIVE_PID = 4242;
 
 async function makeDbs() {
     const dir = tmpDir();
-    // OpenRe's database: PGlite in memory, reached as the target 'pglite:openre' (host() below hands it out).
+    // OpenRestream's database: PGlite in memory, reached as the target 'pglite:openre' (host() below hands it out).
     const openrePath = 'pglite:openre';
     const o = await openDb(load({ NODE_ENV: 'test' }), { memory: true });
     const now = Date.now();
@@ -380,7 +380,7 @@ t('slot: offline RTMP slot with a subject and a migrated definition passes; live
     const dbs = await makeDbs();
     let r = byId(await preflight(opts(dbs, ['--only', 'slot', '--slot', '12']), host(dbs)));
     assert.strictEqual(r.slot.status, 'PASS', r.slot.detail);
-    assert.match(r.slot.detail, /slot 12 \(@rehearsal, rtmp\/obs\) authority live; OpenRe str_1 \(active, mirrored\); 0 destination\(s\)/);
+    assert.match(r.slot.detail, /slot 12 \(@rehearsal, rtmp\/obs\) authority live; OpenRestream str_1 \(active, mirrored\); 0 destination\(s\)/);
     const l = new Database(dbs.livePath);
     await l.prepare('INSERT INTO streams (managed_stream_id, is_live) VALUES (12, 1)').run();
     await l.prepare('DELETE FROM linked_accounts').run();

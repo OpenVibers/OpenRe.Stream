@@ -1,5 +1,5 @@
 [Unit]
-Description=OpenRe.Stream restream worker (ffmpeg per destination), release %i
+Description=OpenRestream restream worker (ffmpeg per destination), release %i
 # One instance per release (instance name = the release directory). A worker deploy STARTS a new
 # instance; the coordinator gives it every new output and drains the older generation, whose
 # outputs run until their sessions end (or OPENRE_DRAIN_MAX_MS: then they move over) before it exits 0.

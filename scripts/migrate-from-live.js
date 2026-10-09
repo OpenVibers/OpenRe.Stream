@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * Import Live's stream slots and restream destinations into OpenRe, from a read-only snapshot of
+ * Import Live's stream slots and restream destinations into OpenRestream, from a read-only snapshot of
  * Live's database, and print the per-channel RTMP cutover checklist.
  *
  *   node scripts/migrate-from-live.js --live-db /path/to/live-snapshot.db            # dry run
@@ -9,7 +9,7 @@
  *   ... [--slots 12,31] [--checklist /path/to/checklist.md]
  *
  * Take the snapshot with `sqlite3 /opt/openvibe.live/data/live.db ".backup /tmp/live-snapshot.db"`
- * (Live's DB_PATH in production; never point this at the live file). Uses the OpenRe environment
+ * (Live's DB_PATH in production; never point this at the live file). Uses the OpenRestream environment
  * (.env or OPENRE_ENV_FILE) for its own database and OPENRE_SECRETS_KEY; in production set
  * OPENRE_ENV_FILE=/etc/openvibe/openre.env and NODE_ENV=production (a unit sets NODE_ENV itself)
  * — docs/cutover.md has the command. Prints no secret: old keys are not imported and the new

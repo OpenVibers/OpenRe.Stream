@@ -1,14 +1,14 @@
 'use strict';
 /**
- * The mediasoup SFU, one Router per OpenRe session, ported from OpenVibe.Live
+ * The mediasoup SFU, one Router per OpenRestream session, ported from OpenVibe.Live
  * server/streaming/webrtc-sfu.js. The differences that matter:
  *
- *   - a "room" is an OpenRe ingest session id (not Live's `stream-<id>`), so a router's lifetime
+ *   - a "room" is an OpenRestream ingest session id (not Live's `stream-<id>`), so a router's lifetime
  *     is exactly the session's;
  *   - consumer/producer/transport bookkeeping is unchanged, so the viewer signaling and the
  *     PlainRTP egress paths behave like Live's;
  *   - PlainRTP consumers (restream, Media's RTP recording, thumbnails) send to an explicit remote
- *     ip:port the caller chose, because on OpenRe the consumer side (ffmpeg) runs in another process.
+ *     ip:port the caller chose, because on OpenRestream the consumer side (ffmpeg) runs in another process.
  *
  * `mediasoup` is required lazily: the module loads (and its turn-free helpers run) on a host where
  * the native dependency is not installed, and `createSfu().available` is false there. The worker

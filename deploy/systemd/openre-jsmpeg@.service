@@ -1,5 +1,5 @@
 [Unit]
-Description=OpenRe.Stream JSMPEG ingest+relay worker, release %i
+Description=OpenRestream JSMPEG ingest+relay worker, release %i
 # One instance per release (instance name = the release directory). A worker deploy STARTS a new
 # instance; the coordinator then drains the older generation, which closes its public listener,
 # keeps its sessions until they leave (or OPENRE_DRAIN_MAX_MS), and exits 0 by itself.

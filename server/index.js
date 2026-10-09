@@ -48,7 +48,7 @@ async function start({ config, clock, fetchImpl = globalThis.fetch, log = consol
 if (require.main === module) {
     require('dotenv').config({ path: process.env.OPENRE_ENV_FILE || path.join(process.cwd(), '.env') });
     start().then((h) => {
-        // SIGTERM/SIGINT (openvibe-sdk/service, docs/service.md's OpenRe.Stream entry): the keys poller stops, requests
+        // SIGTERM/SIGINT (openvibe-sdk/service, docs/service.md's OpenRestream entry): the keys poller stops, requests
         // in flight get 8 s, then Valkey and the database close in that order. A database close failure exits 1;
         // past the 10 s deadline the process also exits 1. Workers are separate processes and keep running.
         gracefulStop({

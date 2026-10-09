@@ -1,6 +1,6 @@
 'use strict';
 /**
- * The worker interface every OpenRe transport worker implements (RTMP ingest, restream, and the
+ * The worker interface every OpenRestream transport worker implements (RTMP ingest, restream, and the
  * WHIP/WebRTC/SFU/JSMPEG kinds as they are ported):
  *
  *   const w = createWorkerRuntime({ rt, kind, log, hooks });

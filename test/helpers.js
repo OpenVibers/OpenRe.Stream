@@ -4,7 +4,7 @@
  * manual clock, runtime/API boot helpers, child-process helpers and a tiny sequential runner.
  *
  * Databases (ADR-035): one per test directory, migrated. npm test: PGlite in memory, so one process (a test that
- * spawns OpenRe processes sharing it says it is skipped); npm run test:pg (OPENRE_TEST_STORE=pg): a schema of its own
+ * spawns OpenRestream processes sharing it says it is skipped); npm run test:pg (OPENRE_TEST_STORE=pg): a schema of its own
  * on the PostgreSQL + PgBouncer containers, whose URLs every spawned process of the directory gets.
  */
 const crypto = require('crypto');
@@ -68,7 +68,7 @@ async function testDb(dir) {
     return await databases.get(dir);
 }
 
-/** Several OpenRe processes on one database need PostgreSQL (PGlite is one process). */
+/** Several OpenRestream processes on one database need PostgreSQL (PGlite is one process). */
 const multiProcess = () => STORE === 'pg';
 
 /** A handle the test keeps: a runtime's or an API's close() leaves it open for the next one on the directory. */

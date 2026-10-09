@@ -3,7 +3,7 @@
  * FFmpeg argument building for restream outputs, ported from OpenVibe.Live
  * server/streaming/restream-manager.js (quality presets, destination URL normalisation, SRT,
  * output flags, friendly errors). Kept byte-for-byte equivalent where it matters so a stream that
- * restreams correctly from Live restreams the same way from OpenRe.
+ * restreams correctly from Live restreams the same way from OpenRestream.
  *
  * RTMP → destination is a codec copy (zero CPU); a JSMPEG source (the worker's MPEG-TS data tap,
  * read over HTTP) is re-encoded with encodingArgs(). A WebRTC source is mediasoup PlainRTP read

@@ -1,7 +1,7 @@
 'use strict';
 // The discovery routes (server/discovery.js) answer with the right content types: robots.txt
 // names the sitemap, sitemap.xml lists the public pages including /, and llms.txt describes what
-// OpenRe.Stream does today. All three come from openvibe-shared/seo, the shared toolkit.
+// OpenRestream does today. All three come from openvibe-shared/seo, the shared toolkit.
 const assert = require('assert');
 const seo = require('openvibe-shared/seo');
 const { bootApi, request, suite } = require('./helpers');
@@ -41,10 +41,10 @@ t('llms.txt is plain text, leads with browser go-live and says what runs today',
         const r = await request(api.base, 'GET', '/llms.txt');
         assert.strictEqual(r.status, 200);
         assert.match(r.headers.get('content-type'), /^text\/plain/);
-        assert.ok(r.text.startsWith('# OpenRe.Stream\n'), 'starts with the site heading');
+        assert.ok(r.text.startsWith('# OpenRestream\n'), 'starts with the site heading');
         assert.match(r.text.split('\n').slice(0, 4).join(' '), /Go live from your browser with no OBS and no follower minimum/, 'browser go-live leads');
         // Only the RTMP ingest and restream workers run in production: WHIP and JSMPEG are ported, not served yet.
-        assert.match(r.text, /WHIP, RFC 9725\) and JSMPEG ingest are ported to OpenRe and tested, but their workers do not run in production yet/);
+        assert.match(r.text, /WHIP, RFC 9725\) and JSMPEG ingest are ported to OpenRestream and tested, but their workers do not run in production yet/);
     } finally {
         await api.close();
     }

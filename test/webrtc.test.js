@@ -28,7 +28,7 @@ function fixtureOffer() {
     ].join('\r\n');
 }
 
-t('config: the WebRTC ports never collide with Live and the RTC range is OpenRe\'s own', () => {
+t('config: the WebRTC ports never collide with Live and the RTC range is OpenRestream\'s own', () => {
     const c = load({});
     assert.strictEqual(c.webrtc.port, 9936);
     assert.strictEqual(c.webrtc.media.minPort, 10200);
@@ -58,7 +58,7 @@ t('WHIP SDP: parse, DTLS role, RTP parameters and the answer', () => {
     assert.strictEqual(rtp.mid, '0');
 
     const transport = { iceParameters: { usernameFragment: 'uf', password: 'pw' }, iceCandidates: [{ foundation: '1', protocol: 'udp', priority: 1, ip: '203.0.113.7', port: 10200, type: 'host' }], dtlsParameters: { fingerprints: [{ algorithm: 'sha-256', value: 'AA:BB' }] } };
-    const answer = sdp.buildSdpAnswer(transport, offer, { video: { rtpParameters: rtp } }, { serverName: 'OpenRe' });
+    const answer = sdp.buildSdpAnswer(transport, offer, { video: { rtpParameters: rtp } }, { serverName: 'OpenRestream' });
     const parsedAnswer = sdp.parse(answer);
     assert.strictEqual(parsedAnswer.media[0].direction, 'recvonly');
     assert.strictEqual(parsedAnswer.media[0].setup, 'passive');

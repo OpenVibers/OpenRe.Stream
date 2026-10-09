@@ -4,7 +4,7 @@
  * and grabs one frame from it every interval, then uploads it to Media as an object under the `live`
  * namespace (grant media.object.upload ns live); the object's public URL becomes the session's
  * thumbnail_url and travels on the session state and its openre.session.* events. Live can no longer
- * read a local FLV/SFU/relay for OpenRe-owned sessions, so the frame has to come from here.
+ * read a local FLV/SFU/relay for OpenRestream-owned sessions, so the frame has to come from here.
  *
  * The grabber is protocol-agnostic: the caller passes the ffmpeg *input* arguments for its source
  * (an RTMP/HTTP-FLV URL, the JSMPEG data tap, or an SDP file for a PlainRTP consumer) and this module

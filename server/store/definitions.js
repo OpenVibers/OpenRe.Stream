@@ -234,7 +234,7 @@ function createDefinitions({ db, config, events, clock }) {
 
     /**
      * The RTMP (or later WHIP) worker's check, synchronous by design: a publish handshake is
-     * answered inside node-media-server's prePublish handler. Only OpenRe's own hashed keys count:
+     * answered inside node-media-server's prePublish handler. Only OpenRestream's own hashed keys count:
      * this never looks at any other service's database.
      */
     async function resolveIngestKey(plain, protocol) {

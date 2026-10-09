@@ -13,7 +13,7 @@
  *            published in its worker row, so consumers always reach the process that holds the
  *            publisher.
  *
- * Authentication happens inside the publish handshake, synchronously, against OpenRe's hashed
+ * Authentication happens inside the publish handshake, synchronously, against OpenRestream's hashed
  * keys only. An accepted publish is renamed from /live/<key> to /live/<session id> before
  * node-media-server registers it, so the key never appears in any play URL, log or descriptor.
  *

@@ -15,13 +15,13 @@
  *   bind      OPENRE_RTMP_BIND is public and the RTMP port really listens on a public address
  *   dns       the ingest host resolves (A/AAAA) only to this host's addresses
  *   port      the ingest port answers an RTMP handshake from outside (see "port" below)
- *   db        OpenRe's PostgreSQL database (DATABASE_URL of openre.env, one READ ONLY transaction): no data
+ *   db        OpenRestream's PostgreSQL database (DATABASE_URL of openre.env, one READ ONLY transaction): no data
  *             checksum failure, no foreign key left unvalidated, the main tables' counts
  *   live-env  /etc/openvibe/live.env has OPENRE_URL, OPENRE_EVENTS_SECRET (32+ chars) and
  *             OV_OAUTH_CLIENT_SECRET, and the running Live process was started with them
  *   events    Events has Live's openre.session.* subscription to /internal/openre-events, enabled,
  *             with the secret Live holds (compared by hash, never printed), and no dead deliveries
- *   slot      only with --slot <id>: the Live slot and its OpenRe definition, for the per-slot step;
+ *   slot      only with --slot <id>: the Live slot and its OpenRestream definition, for the per-slot step;
  *             --slot all (or --all-slots): every Live slot, one slot:<id> line each, same rules
  *
  * "port": from the host itself a connection to its own public address never crosses the provider
@@ -29,7 +29,7 @@
  * that is not the host (a checkout with `npm ci` is enough), or pass --probe-url with a probe you
  * trust (GET, `{host}` and `{port}` replaced, JSON answer with a boolean `open` or `reachable`).
  *
- * OpenRe and Events serve from PostgreSQL (ADR-035): their databases are read through the DATABASE_URL of their env
+ * OpenRestream and Events serve from PostgreSQL (ADR-035): their databases are read through the DATABASE_URL of their env
  * files (--openre-db / --events-db take env:<file>, a postgres:// URL or a SQLite file); Live's is still its SQLite file.
  *
  * Nothing is written anywhere: files are opened read-only and PostgreSQL is read in READ ONLY transactions, no secret value is
@@ -379,7 +379,7 @@ async function checkLiveEnv(ctx) {
     else if (env.OPENRE_URL.replace(/\/+$/, '') !== opts.openreUrl) problems.push(`OPENRE_URL = ${env.OPENRE_URL}, expected ${opts.openreUrl}`);
     if (!env.OPENRE_EVENTS_SECRET) problems.push('OPENRE_EVENTS_SECRET not set');
     else if (env.OPENRE_EVENTS_SECRET.length < 32) problems.push('OPENRE_EVENTS_SECRET shorter than 32 characters (Events refuses it)');
-    if (!env.OV_OAUTH_CLIENT_SECRET) problems.push('OV_OAUTH_CLIENT_SECRET not set (Live cannot get OpenRe tokens)');
+    if (!env.OV_OAUTH_CLIENT_SECRET) problems.push('OV_OAUTH_CLIENT_SECRET not set (Live cannot get OpenRestream tokens)');
     const notes = [];
     if (!env.OPENRE_PUBLIC_URL) notes.push('OPENRE_PUBLIC_URL unset (default https://openre.stream)');
     // The running process: systemd loaded the env file when Live started. Names only.
@@ -447,15 +447,15 @@ async function checkSlot(ctx, id = Number(ctx.opts.slot)) {
     if (live.user && live.user.is_banned) problems.push('owner is banned');
     if (!live.subject) problems.push('owner has no canonical subject (they sign in to Live once)');
     if (live.liveNow) problems.push(`live on Live right now (stream ${live.liveNow.id}): wait for the window`);
-    if (s.protocol !== 'rtmp' && !['rtmp', 'obs'].includes(String(s.streaming_method || '').toLowerCase())) problems.push('not an RTMP slot (OpenRe carries RTMP only)');
-    if (openre.defs.length > 1) problems.push(`${openre.defs.length} OpenRe definitions reference it`);
+    if (s.protocol !== 'rtmp' && !['rtmp', 'obs'].includes(String(s.streaming_method || '').toLowerCase())) problems.push('not an RTMP slot (OpenRestream carries RTMP only)');
+    if (openre.defs.length > 1) problems.push(`${openre.defs.length} OpenRestream definitions reference it`);
     const def = openre.defs[0];
     if (def) {
-        facts.push(`OpenRe ${def.id} (${def.state}${def.mirror_to_live ? ', mirrored' : ', NOT mirrored to Live'})`);
+        facts.push(`OpenRestream ${def.id} (${def.state}${def.mirror_to_live ? ', mirrored' : ', NOT mirrored to Live'})`);
         const held = openre.dests.filter((d) => d.hold_reason).length;
         facts.push(`${openre.dests.length} destination(s)${held ? `, ${held} held` : ''}`);
-        if (s.openre_stream_id && s.openre_stream_id !== def.id) problems.push(`Live points at ${s.openre_stream_id}, OpenRe has ${def.id}`);
-        if (openre.openSessions) facts.push(`${openre.openSessions} open OpenRe session(s)`);
+        if (s.openre_stream_id && s.openre_stream_id !== def.id) problems.push(`Live points at ${s.openre_stream_id}, OpenRestream has ${def.id}`);
+        if (openre.openSessions) facts.push(`${openre.openSessions} open OpenRestream session(s)`);
     } else facts.push(openre.slotMap ? `migration_map: ${openre.slotMap.status}${openre.slotMap.reason ? ` (${openre.slotMap.reason})` : ''}` : 'not migrated yet');
     if (problems.length) return ['FAIL', `${facts.join('; ')}: ${problems.join('; ')}`];
     return ['PASS', facts.join('; ')];

@@ -1,5 +1,5 @@
 [Unit]
-Description=OpenRe.Stream session coordinator: worker leases and generations, output assignment, recording requests, event relay
+Description=OpenRestream session coordinator: worker leases and generations, output assignment, recording requests, event relay
 # Stateless between ticks (everything is in the database): restarting it never ends a session.
 After=network.target postgresql.service pgbouncer.service valkey-server.service
 Wants=postgresql.service pgbouncer.service valkey-server.service

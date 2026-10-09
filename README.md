@@ -1,4 +1,4 @@
-# OpenRe.Stream
+# OpenRestream
 
 > Ingest and restream: stream definitions, keys, sessions, transport workers, outputs and output health.
 
@@ -9,7 +9,7 @@
 
 ## Purpose
 
-The ingest/restream control plane and runtime extracted from OpenVibe.Live. Live keeps the creator/channel product and observes sessions through OpenRe APIs and events; transport workers survive Live deploys **and OpenRe API deploys**. This is the permanent fix for "restarting Live drops live RTMP streams" (hazard H1).
+The ingest/restream control plane and runtime extracted from OpenVibe.Live. Live keeps the creator/channel product and observes sessions through OpenRestream APIs and events; transport workers survive Live deploys **and OpenRestream API deploys**. This is the permanent fix for "restarting Live drops live RTMP streams" (hazard H1).
 
 ## Owns
 
@@ -33,15 +33,15 @@ The ingest/restream control plane and runtime extracted from OpenVibe.Live. Live
 - OpenVibe.Events (event relay; optional: rows wait in the outbox)
 - OpenVibe.Media (recording requests; optional: sessions work without it)
 - OpenVibe.Contracts v0.76.0 (ids, problem+json, capability checks), OpenVibe.SDK v0.26.0 (`db`, PostgreSQL outbox, token client, per-actor limits, the `service` kit), OpenVibe.Shared v2.5.0 (Frame, readiness), pinned by release tarball
-- **PostgreSQL 18 and Valkey 9** (OpenVibe.Host `roles/data/`, ADR-035): the store every OpenRe process shares, and the API's per-actor limit counters (optional)
+- **PostgreSQL 18 and Valkey 9** (OpenVibe.Host `roles/data/`, ADR-035): the store every OpenRestream process shares, and the API's per-actor limit counters (optional)
 - OpenVibe.Live (`live.lineage.resolve`: which channel a Live-linked stream belongs to)
 - node-media-server 2.7.4 (the RTMP session code Live runs) and the system ffmpeg
 
 ## What is ported, per protocol
 
-| Transport | Live source | In OpenRe | State |
+| Transport | Live source | In OpenRestream | State |
 |---|---|---|---|
-| RTMP ingest | `server/streaming/rtmp-server.js` (node-media-server) | `workers/rtmp-ingest.js` — same NMS session code; OpenRe's own keys; publish renamed to `/live/<session id>` so no key reaches a play URL; loopback RTMP play + HTTP-FLV per generation; SO_REUSEPORT drain | **ported, tested with real ffmpeg** |
+| RTMP ingest | `server/streaming/rtmp-server.js` (node-media-server) | `workers/rtmp-ingest.js` — same NMS session code; OpenRestream's own keys; publish renamed to `/live/<session id>` so no key reaches a play URL; loopback RTMP play + HTTP-FLV per generation; SO_REUSEPORT drain | **ported, tested with real ffmpeg** |
 | Restream (RTMP source) | `server/streaming/restream-manager.js` | `workers/restream/*` — same ffmpeg arguments (codec copy from HTTP-FLV), Twitch→RTMPS, Kick `/app`, SRT options, live ACK by `-progress`, backoff, rapid-crash circuit breaker, destination cooldown | **ported, tested with real ffmpeg** |
 | Restream from a JSMPEG source | same | `jsmpegArgs()` — re-encodes the worker's MPEG-TS data tap (`http://127.0.0.1:<tapPort>/tap/<session>.ts`) | **ported, tested with real ffmpeg** |
 | Restream from a WebRTC source | same | `webrtcArgs()`/`rtpInputArgs()` — re-encodes a mediasoup PlainRTP consumer the owning worker sends to ffmpeg's ports (SDP written by the worker's egress API) | **ported, tested with real ffmpeg + mediasoup** |
@@ -49,7 +49,7 @@ The ingest/restream control plane and runtime extracted from OpenVibe.Live. Live
 | WebRTC (WHIP ingest + SFU + viewer signaling) | `whip-handler.js` + `webrtc-sfu.js` + `broadcast-server.js` (mediasoup; one worker owns all of it) | `workers/webrtc.js` + `workers/webrtc/{sfu,sdp,signaling}.js` — WHIP (RFC 9725) admission by key, one mediasoup Router per session, `/b/<key>` broadcaster + `/w/<id>` viewer signaling, loopback RTP/SDP egress for restream/recording/thumbnails; SO_REUSEPORT drain | **ported, tested with real mediasoup** |
 | Live thumbnails | `media-proxy/live-thumbs.js` | `workers/thumbnails.js` — the owning worker grabs a frame from its own source (FLV, MPEG-TS tap or a PlainRTP consumer) and uploads it to Media (object ns `live`); the session carries `thumbnail_url` | **ported, tested against a stub Media** |
 | JSMPEG | `jsmpeg-relay.js` | `workers/jsmpeg.js` — MPEG-TS POST admission by key in path, WebSocket viewers by playback id, loopback MPEG-TS data tap for restream; SO_REUSEPORT drain | **ported, tested with real ffmpeg** |
-| OAuth-linked destinations (per go-live Twitch/YouTube key refresh, YouTube broadcast creation) | `restream-manager._refreshDestFromConnection` | no (Live owns platform OAuth); OpenRe pushes to the stored key | **not ported** |
+| OAuth-linked destinations (per go-live Twitch/YouTube key refresh, YouTube broadcast creation) | `restream-manager._refreshDestFromConnection` | no (Live owns platform OAuth); OpenRestream pushes to the stored key | **not ported** |
 | Viewer counts from platforms, chat relay, PowerChat | restream-manager / integrations | no (product features, stay in Live) | not in scope |
 
 ## Processes
@@ -66,7 +66,7 @@ openre-api (4500)            openre-session-coordinator        openre-rtmp-inges
 - **Generations.** Each worker process registers as generation N+1 of its kind. When a newer generation is `ready`, the coordinator marks older ones `draining` (deadline `OPENRE_DRAIN_MAX_MS`, default 24 h). A draining RTMP worker closes its public listener (the kernel sends new encoder connections to the new generation through the shared port) and keeps its publishers; a draining restream worker keeps its outputs. Idle → the process exits 0 by itself. At the deadline, remaining sessions are ended (encoders reconnect to the newest generation) and remaining outputs are handed over.
 - **Leases.** Every heartbeat (2 s) renews the worker and the lease of every session it owns in one transaction. A worker silent for `OPENRE_WORKER_LEASE_MS` (15 s) is `lost`: its sessions fail (`openre.session.failed`), its outputs go back to `pending` for another worker. A lost worker that wakes up drops its transports and exits.
 - **Isolation.** An output only ever changes its own row. A dead destination fails (`openre.output.failed`, destination cooldown 15 min → 24 h) and the session stays live (`test/rtmp-e2e.test.js`, `test/sessions.test.js`, `test/coordinator.test.js`).
-- **Store.** PostgreSQL 18 through PgBouncer (`ov_openre` on the host's data role, ADR-035; schema in [migrations/](migrations/)), shared by every OpenRe process. Every transaction is SERIALIZABLE (`server/store/index.js`): an ingest worker admitting a publish and the coordinator failing a lost worker's session conflict, and PostgreSQL makes one of them retry. Admission is async, so the RTMP worker admits a publish before node-media-server's own publish handling runs. Valkey holds the API's per-actor limit counters.
+- **Store.** PostgreSQL 18 through PgBouncer (`ov_openre` on the host's data role, ADR-035; schema in [migrations/](migrations/)), shared by every OpenRestream process. Every transaction is SERIALIZABLE (`server/store/index.js`): an ingest worker admitting a publish and the coordinator failing a lost worker's session conflict, and PostgreSQL makes one of them retry. Admission is async, so the RTMP worker admits a publish before node-media-server's own publish handling runs. Valkey holds the API's per-actor limit counters.
 
 ## Running it
 
@@ -96,7 +96,7 @@ Called elsewhere, as the service principal `openre` (client credentials from Net
 | OpenVibe.Live | `live.lineage.resolve` | the channel a Live-linked stream definition belongs to |
 | OpenVibe.Media | the `live` tenant key today (`MEDIA_API_KEY`); `media.object.upload` once `OPENRE_MEDIA_AUTH=service` | recording requests |
 
-The full grant list, including what Live needs to call OpenRe, is under "Grants the lead adds in
+The full grant list, including what Live needs to call OpenRestream, is under "Grants the lead adds in
 Network" below.
 
 ## Auth
@@ -126,7 +126,7 @@ The ids were proposed in [docs/capabilities-proposal/](docs/capabilities-proposa
 
 ## Events
 
-Written to `event_outbox` in the same transaction as the change (openvibe-sdk `createPgOutbox`); the coordinator's relay publishes them with OpenRe's service token. Envelopes validate against `events.event-envelope@1`; `visibility: internal`; no payload ever carries an ingest key or a destination key.
+Written to `event_outbox` in the same transaction as the change (openvibe-sdk `createPgOutbox`); the coordinator's relay publishes them with OpenRestream's service token. Envelopes validate against `events.event-envelope@1`; `visibility: internal`; no payload ever carries an ingest key or a destination key.
 
 | Type | Subject | When |
 |---|---|---|
@@ -140,7 +140,7 @@ Written to `event_outbox` in the same transaction as the change (openvibe-sdk `c
 
 ## Playback
 
-`GET /api/v1/sessions/:id/playback` returns a descriptor: `flv.internal_url` (loopback HTTP-FLV on the worker that holds the session — for services on this host), `flv.public_url` (`https://openre.stream/play/<session>.flv`, proxied by the API for non-private streams), `rtmp.internal_url` (loopback RTMP play, what Media records from). A **jsmpeg** session's descriptor is `jsmpeg: { ws_url, width, height }` (`ws_url` is the worker's public WebSocket path carrying the session's playback id, never the key; `width`/`height` come from the ffmpeg POST path), plus `jsmpeg.tap_internal_url`, the loopback MPEG-TS tap the restream worker reads. A **webrtc** session's descriptor is `webrtc: { signaling_url, announced_ip }` (`signaling_url` is `ws(s)://<host>:<port>/w/<session id>`, the viewer signaling endpoint keyed by playback id, never the key; Live's watch page runs the mediasoup-client `sfu-viewer-*` flow against it). Every descriptor also carries `thumbnail_url` (the Media object the worker's latest grabbed frame was uploaded to, or `null`) and the session API reports `viewers` (connected consumers / relay sockets, from the worker heartbeat); `hls` is `null` (not produced). Live's player keeps using its own `/api/streams/rtmp-proxy/:id.flv`, which for an OpenRe session proxies `flv.internal_url` (see the Live patch). **AI taps** (decision 6: they stay in Live and read OpenRe's sources, never a Live-local ingest): an **rtmp** session's `flv.internal_url` (loopback HTTP-FLV) and a **webrtc** session's RTP descriptor on the owning worker's loopback egress API — `GET /rtp/<session id>/describe` (the codec facts, e.g. for Media's RTP ingest) and `GET /rtp/<session id>?vport=<p>&aport=<p>` (the SDP a pulling ffmpeg reads, a PlainRTP consumer per producer). Both are loopback-only, reachable by services on the worker's host.
+`GET /api/v1/sessions/:id/playback` returns a descriptor: `flv.internal_url` (loopback HTTP-FLV on the worker that holds the session — for services on this host), `flv.public_url` (`https://openre.stream/play/<session>.flv`, proxied by the API for non-private streams), `rtmp.internal_url` (loopback RTMP play, what Media records from). A **jsmpeg** session's descriptor is `jsmpeg: { ws_url, width, height }` (`ws_url` is the worker's public WebSocket path carrying the session's playback id, never the key; `width`/`height` come from the ffmpeg POST path), plus `jsmpeg.tap_internal_url`, the loopback MPEG-TS tap the restream worker reads. A **webrtc** session's descriptor is `webrtc: { signaling_url, announced_ip }` (`signaling_url` is `ws(s)://<host>:<port>/w/<session id>`, the viewer signaling endpoint keyed by playback id, never the key; Live's watch page runs the mediasoup-client `sfu-viewer-*` flow against it). Every descriptor also carries `thumbnail_url` (the Media object the worker's latest grabbed frame was uploaded to, or `null`) and the session API reports `viewers` (connected consumers / relay sockets, from the worker heartbeat); `hls` is `null` (not produced). Live's player keeps using its own `/api/streams/rtmp-proxy/:id.flv`, which for an OpenRestream session proxies `flv.internal_url` (see the Live patch). **AI taps** (decision 6: they stay in Live and read OpenRestream's sources, never a Live-local ingest): an **rtmp** session's `flv.internal_url` (loopback HTTP-FLV) and a **webrtc** session's RTP descriptor on the owning worker's loopback egress API — `GET /rtp/<session id>/describe` (the codec facts, e.g. for Media's RTP ingest) and `GET /rtp/<session id>?vport=<p>&aport=<p>` (the SDP a pulling ffmpeg reads, a PlainRTP consumer per producer). Both are loopback-only, reachable by services on the worker's host.
 
 ## Recording
 
@@ -160,15 +160,15 @@ Reporting a vulnerability: [SECURITY.md](SECURITY.md).
 
 | Port | Owner | Until |
 |---|---|---|
-| 1935/tcp | Live's in-process RTMP (node-media-server) | Live's RTMP ingest is retired (after the last slot has run on OpenRe for two weeks, ADR-009) |
+| 1935/tcp | Live's in-process RTMP (node-media-server) | Live's RTMP ingest is retired (after the last slot has run on OpenRestream for two weeks, ADR-009) |
 | 9935/tcp (loopback) | Live's HTTP-FLV | same |
-| **1936/tcp** | OpenRe `openre-rtmp-ingest` (all generations, SO_REUSEPORT) | permanent: URLs handed out as `rtmp://ingest.openre.stream:1936/live` keep working |
-| 19360–19399/tcp (loopback) | OpenRe per-generation RTMP play + HTTP-FLV | permanent |
-| **9736/tcp** | OpenRe `openre-jsmpeg` (all generations, SO_REUSEPORT): MPEG-TS POST + WS viewers | permanent: `http://ingest.openre.stream:9736/<key>/<w>/<h>/` and `ws://…/<session>` |
-| 19710–19749/tcp (loopback) | OpenRe per-generation JSMPEG MPEG-TS data tap | permanent |
-| **9936/tcp** | OpenRe `openre-webrtc` (all generations, SO_REUSEPORT): WHIP + `/b/<key>` and `/w/<id>` signaling (Live's WHIP is on its app port 3000) | permanent: `http(s)://ingest.openre.stream/whip/<key>` and `ws(s)://ingest.openre.stream/<b\|w>/…` |
-| **10200–10300/udp** | OpenRe `openre-webrtc` mediasoup RTC (never Live's 10000–10100) | permanent: open at the provider edge, `MEDIASOUP_ANNOUNCED_IP` must be reachable |
-| 19810–19849/tcp (loopback) | OpenRe per-generation WebRTC RTP/SDP egress API (restream, Media's RTP recorder, thumbnails) | permanent |
+| **1936/tcp** | OpenRestream `openre-rtmp-ingest` (all generations, SO_REUSEPORT) | permanent: URLs handed out as `rtmp://ingest.openre.stream:1936/live` keep working |
+| 19360–19399/tcp (loopback) | OpenRestream per-generation RTMP play + HTTP-FLV | permanent |
+| **9736/tcp** | OpenRestream `openre-jsmpeg` (all generations, SO_REUSEPORT): MPEG-TS POST + WS viewers | permanent: `http://ingest.openre.stream:9736/<key>/<w>/<h>/` and `ws://…/<session>` |
+| 19710–19749/tcp (loopback) | OpenRestream per-generation JSMPEG MPEG-TS data tap | permanent |
+| **9936/tcp** | OpenRestream `openre-webrtc` (all generations, SO_REUSEPORT): WHIP + `/b/<key>` and `/w/<id>` signaling (Live's WHIP is on its app port 3000) | permanent: `http(s)://ingest.openre.stream/whip/<key>` and `ws(s)://ingest.openre.stream/<b\|w>/…` |
+| **10200–10300/udp** | OpenRestream `openre-webrtc` mediasoup RTC (never Live's 10000–10100) | permanent: open at the provider edge, `MEDIASOUP_ANNOUNCED_IP` must be reachable |
+| 19810–19849/tcp (loopback) | OpenRestream per-generation WebRTC RTP/SDP egress API (restream, Media's RTP recorder, thumbnails) | permanent |
 | 4500/tcp (loopback) | `openre-api` | permanent |
 
 The switch to 1935: once Live no longer listens on 1935, set `OPENRE_RTMP_EXTRA_PORTS=1935` and deploy a worker generation (`deploy.sh workers`); from then on `rtmp://ingest.openre.stream/live` works too, and 1936 keeps working. `ingest.openre.stream` is a DNS-only record (RTMP cannot go through Cloudflare's proxy); open 1936/tcp at the host firewall and the provider edge.
@@ -187,7 +187,7 @@ sudo deploy/scripts/deploy.sh workers               # deploy-legacy.sh: starts a
 sudo deploy/scripts/deploy.sh status                # deploy-legacy.sh
 ```
 
-- ovhost refuses an API restart while an ingest session is open (`--wait-idle` holds it, `--force` goes ahead), records every attempt (`ovhost releases openre`), prunes releases beyond five but never one a worker generation runs from, and announces the release. When ovhost is missing, too old or does not deploy OpenRe with `release-layout`, the wrapper runs [deploy/scripts/deploy-legacy.sh](deploy/scripts/deploy-legacy.sh), the previous script, unchanged (`OVHOST_LEGACY=1` forces it). `workers`, `status` and `prune` always run it.
+- ovhost refuses an API restart while an ingest session is open (`--wait-idle` holds it, `--force` goes ahead), records every attempt (`ovhost releases openre`), prunes releases beyond five but never one a worker generation runs from, and announces the release. When ovhost is missing, too old or does not deploy OpenRestream with `release-layout`, the wrapper runs [deploy/scripts/deploy-legacy.sh](deploy/scripts/deploy-legacy.sh), the previous script, unchanged (`OVHOST_LEGACY=1` forces it). `workers`, `status` and `prune` always run it.
 
 - An **API deploy** never restarts a worker unit (no unit depends on another). Viewers of `openre.stream/play/…` reconnect; encoders, restreams and recordings do not notice.
 - A **worker deploy** starts `openre-rtmp-ingest@<sha>`, `openre-restream-worker@<sha>` and `openre-jsmpeg@<sha>`; older instances are disabled (not stopped) and exit on their own when drained. Never `systemctl restart` a worker instance during a broadcast; `systemctl stop` starts a drain and waits up to 30 min (`TimeoutStopSec`), then kills.
@@ -203,17 +203,17 @@ sudo deploy/scripts/deploy.sh status                # deploy-legacy.sh
 
 [docs/live-patch.diff](docs/live-patch.diff) is the Live side, made against OpenVibe.Live `f11f809` and verified there (applies with `git apply`; Live's `npm test` 63/63 on Node 22.22.1). It is applied in Live (`f0ca18b`) and deployed in production, switched off: `OPENRE_URL` is not set in Live's env. **Switch off (the default) changes nothing**: with `OPENRE_URL` unset, or a slot on `'live'`, every changed code path returns what it returned before (`test/openre-switch.test.js` in the patch). The only observable difference is additive: owner responses built from `managed_streams` rows carry the two new columns (`ingest_authority: 'live'`, `openre_stream_id: null`). It adds:
 
-- `server/openre/openre-client.js` — service-token client for OpenRe (streams by `external_ref`, create, rotate, sessions, playback descriptors).
+- `server/openre/openre-client.js` — service-token client for OpenRestream (streams by `external_ref`, create, rotate, sessions, playback descriptors).
 - `managed_streams.ingest_authority` (`'live'` default | `'openre'`) + `openre_stream_id`, and an `openre_sessions` projection table (additive, in `initDb`).
-- Live's RTMP `prePublish` refuses a slot key when the slot is on `'openre'`, and a personal key (`users.stream_key`) when any of the user's slots is (a stream can never be ingested twice, and Live never pushes the same destinations as OpenRe). Only RTMP moves; WHIP/browser/JSMPEG for that slot stay on Live.
-- Go Live / stream-key UI for `'openre'` slots: `GET /api/streams/managed` returns the slot without its Live key; `GET /api/streams/managed/:id/profile` and `GET /api/streams/:id/endpoint` show OpenRe's RTMP URL and a key hint (never a key); `POST /api/streams/managed/:id/regenerate-key` rotates on OpenRe and shows the new key once; `GET /api/streams/:id/rtmp-status` reads the mirror. Small fallbacks in `broadcast.js` / `broadcast-workspace.js` display the hint.
-- `POST /internal/openre-events` — OpenVibe.Events delivery endpoint (SDK `parseDelivery` + `createInbox`, consumer `live-openre-mirror`): `openre.session.started` creates or attaches the slot's `streams` row (control config, go-live notifications, Live's own `live.stream.started`), `ended`/`failed` end it and stop the RobotStreamer bridge, chat relays and AI bots as Live's own unpublish does; revision-ordered, exactly once; only for switched slots whose definition has `mirror_to_live` (consent). A 30 s reconcile asks OpenRe about mirrored live sessions (heartbeat refresh; ends rows OpenRe ended). Live's stale-stream cleanup skips mirrored sessions OpenRe confirmed in the last 30 min, and Live's boot-time restream resume skips them.
-- Playback: `GET /api/streams/rtmp-proxy/:id.flv` proxies the session's `flv.internal_url` from OpenRe's playback descriptor (validated as a loopback `…/live/ses_….flv` URL), so Live's player is unchanged.
+- Live's RTMP `prePublish` refuses a slot key when the slot is on `'openre'`, and a personal key (`users.stream_key`) when any of the user's slots is (a stream can never be ingested twice, and Live never pushes the same destinations as OpenRestream). Only RTMP moves; WHIP/browser/JSMPEG for that slot stay on Live.
+- Go Live / stream-key UI for `'openre'` slots: `GET /api/streams/managed` returns the slot without its Live key; `GET /api/streams/managed/:id/profile` and `GET /api/streams/:id/endpoint` show OpenRestream's RTMP URL and a key hint (never a key); `POST /api/streams/managed/:id/regenerate-key` rotates on OpenRestream and shows the new key once; `GET /api/streams/:id/rtmp-status` reads the mirror. Small fallbacks in `broadcast.js` / `broadcast-workspace.js` display the hint.
+- `POST /internal/openre-events` — OpenVibe.Events delivery endpoint (SDK `parseDelivery` + `createInbox`, consumer `live-openre-mirror`): `openre.session.started` creates or attaches the slot's `streams` row (control config, go-live notifications, Live's own `live.stream.started`), `ended`/`failed` end it and stop the RobotStreamer bridge, chat relays and AI bots as Live's own unpublish does; revision-ordered, exactly once; only for switched slots whose definition has `mirror_to_live` (consent). A 30 s reconcile asks OpenRestream about mirrored live sessions (heartbeat refresh; ends rows OpenRestream ended). Live's stale-stream cleanup skips mirrored sessions OpenRestream confirmed in the last 30 min, and Live's boot-time restream resume skips them.
+- Playback: `GET /api/streams/rtmp-proxy/:id.flv` proxies the session's `flv.internal_url` from OpenRestream's playback descriptor (validated as a loopback `…/live/ses_….flv` URL), so Live's player is unchanged.
 - Restream routes refuse (409 + `manage_url`) edits/start/stop for destinations of `'openre'` slots: those restreams run and are managed on openre.stream.
-- Admin: `GET /api/admin/openre/status`, `PUT /api/admin/openre/managed/:id/ingest-authority {authority, force}` — `'openre'` needs the slot offline, an RTMP slot (or `force`), the owner's canonical subject; it finds or creates the OpenRe definition and, in one transaction, flips the slot and rotates Live's own key for it. `'live'` flips back.
+- Admin: `GET /api/admin/openre/status`, `PUT /api/admin/openre/managed/:id/ingest-authority {authority, force}` — `'openre'` needs the slot offline, an RTMP slot (or `force`), the owner's canonical subject; it finds or creates the OpenRestream definition and, in one transaction, flips the slot and rotates Live's own key for it. `'live'` flips back.
 - Env: `OPENRE_URL`, `OPENRE_PUBLIC_URL`, `OPENRE_EVENTS_SECRET` (in Live's `.env.example`). Unsetting `OPENRE_URL` is the emergency rollback for every switched slot at once.
 
-Not in the patch (follow-ups): live thumbnails, AI audio/vision taps and the RobotStreamer publisher for OpenRe sessions (they read Live's local HTTP-FLV by key; they can read `flv.internal_url` for an rtmp session and the worker's loopback RTP descriptor — `GET /rtp/<session id>/describe` and `?vport=&aport=` — for a webrtc one); Stream Manager destination editing through OpenRe's API (today: a link to openre.stream); platform viewer counts for OpenRe outputs.
+Not in the patch (follow-ups): live thumbnails, AI audio/vision taps and the RobotStreamer publisher for OpenRestream sessions (they read Live's local HTTP-FLV by key; they can read `flv.internal_url` for an rtmp session and the worker's loopback RTP descriptor — `GET /rtp/<session id>/describe` and `?vport=&aport=` — for a webrtc one); Stream Manager destination editing through OpenRestream's API (today: a link to openre.stream); platform viewer counts for OpenRestream outputs.
 
 ## Migration
 
@@ -221,7 +221,7 @@ Not in the patch (follow-ups): live thumbnails, AI audio/vision taps and the Rob
 
 ## Cutover runbook
 
-ADR-009: one protocol at a time (RTMP → WHIP → JSMPEG → SFU), per slot, behind the switch, in a maintenance window agreed with the broadcaster; every key that existed before is rotated at the RTMP cutover; Live's ingest code stays until the last protocol has run on OpenRe for two weeks.
+ADR-009: one protocol at a time (RTMP → WHIP → JSMPEG → SFU), per slot, behind the switch, in a maintenance window agreed with the broadcaster; every key that existed before is rotated at the RTMP cutover; Live's ingest code stays until the last protocol has run on OpenRestream for two weeks.
 
 ### RTMP (ready)
 
@@ -241,7 +241,7 @@ the checks and the rollback for every step. In short:
 
 `scripts/cutover-preflight.js` checks, read-only, what each step needs: the release, the service,
 the env, the bind, DNS, the port from outside, the database, Live's env, the Events subscription and
-one slot. Status on 2026-09-23: OpenRe is deployed (`655b98a10aaa`) and DNS is done. The release with
+one slot. Status on 2026-09-23: OpenRestream is deployed (`655b98a10aaa`) and DNS is done. The release with
 `6dc78a5`, the public bind, the provider port, Live's settings and the subscription are not.
 
 ### JSMPEG (worker ready)
@@ -256,13 +256,13 @@ one slot. Status on 2026-09-23: OpenRe is deployed (`655b98a10aaa`) and DNS is d
 
 | Criterion (ADR-009 / plan W7) | Evidence |
 |---|---|
-| OpenRe ingests and restreams without visiting Live | `test/rtmp-e2e.test.js`: real ffmpeg publish → OpenRe worker → ffmpeg restream to an RTMP sink; no Live process involved |
-| Deploying the OpenRe API does not end worker-owned transports | `test/api-restart.test.js` (API process SIGTERM + restart while a worker process holds a live session; lease keeps renewing) and `test/rtmp-e2e.test.js` (same with a real encoder, restream and FLV playback afterwards) |
+| OpenRestream ingests and restreams without visiting Live | `test/rtmp-e2e.test.js`: real ffmpeg publish → OpenRestream worker → ffmpeg restream to an RTMP sink; no Live process involved |
+| Deploying the OpenRestream API does not end worker-owned transports | `test/api-restart.test.js` (API process SIGTERM + restart while a worker process holds a live session; lease keeps renewing) and `test/rtmp-e2e.test.js` (same with a real encoder, restream and FLV playback afterwards) |
 | New sessions route to the newest ready generation; old workers drain | `test/rtmp-e2e.test.js` (second RTMP worker process: new publish on generation 2, generation 1 keeps its session, closes its listener and exits 0 when it ends), `test/coordinator.test.js` |
 | A destination failure never terminates the source session | `test/rtmp-e2e.test.js` (dead destination fails, session and encoder stay), `test/sessions.test.js`, `test/coordinator.test.js` (lost restream worker) |
 | Recording finalisation stays in Media | `test/recording-events.test.js`, `test/rtmp-e2e.test.js` (Media is asked to create/ingest/finalise; Media's ffmpeg pulls the loopback URL) |
 | Every stream key that existed before is rotated | `test/migration.test.js` (old keys never imported; new keys unseen), Live patch rotates Live's own slot key at the switch; checklist step for personal keys |
-| Deploying Live during a broadcast does not interrupt transport or recording | by construction (no OpenRe process talks to Live); proven for real only once a slot runs on OpenRe — not claimed here (every Live restart still stops Live's own restreams) |
+| Deploying Live during a broadcast does not interrupt transport or recording | by construction (no OpenRestream process talks to Live); proven for real only once a slot runs on OpenRestream — not claimed here (every Live restart still stops Live's own restreams) |
 | Switch off = no Live behaviour change | Live's full `npm test` with the patch applied, plus `test/openre-switch.test.js` |
 
 ## Launch rule

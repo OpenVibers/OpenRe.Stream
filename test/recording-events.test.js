@@ -1,6 +1,6 @@
 'use strict';
 // Recording requests (Media contract as Live's recorder uses it) and the event relay (outbox →
-// OpenVibe.Events with OpenRe's service token), with stub Media / Network / Events servers.
+// OpenVibe.Events with OpenRestream's service token), with stub Media / Network / Events servers.
 const assert = require('assert');
 const http = require('http');
 const { runtime, manualClock, suite, OWNER, silent, outboxTypes } = require('./helpers');

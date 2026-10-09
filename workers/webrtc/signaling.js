@@ -2,7 +2,7 @@
 /**
  * WS signaling for WebRTC, modelled on the producer and viewer halves of OpenVibe.Live's
  * server/streaming/broadcast-server.js so Live's broadcast and watch pages can point their
- * mediasoup-client at OpenRe:
+ * mediasoup-client at OpenRestream:
  *
  *   ws://<host>:<port>/b/<ingest key>        the broadcaster (Live's role: produce into the SFU)
  *   ws://<host>:<port>/w/<session playback id>  a viewer (consume; never carries the key)
@@ -129,7 +129,7 @@ function createSignaling({ sfu, iceServers, admit, endSession, log = console }) 
             try { adm = await admit(decodeURIComponent(bMatch[1])); } catch (err) { adm = { error: err.message }; }
             if (!adm || adm.error) {
                 log.log(`[webrtc] broadcast refused (${adm && adm.error}) from ${socket.remoteAddress || '?'}`);
-                socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nX-OpenRe-Error: ' + (adm && adm.error || 'refused') + '\r\n\r\n');
+                socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nX-OpenRestream-Error: ' + (adm && adm.error || 'refused') + '\r\n\r\n');
                 socket.destroy();
                 return true;
             }

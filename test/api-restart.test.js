@@ -1,5 +1,5 @@
 'use strict';
-// ADR-009 acceptance: "Deploying the OpenRe API does not end worker-owned transports."
+// ADR-009 acceptance: "Deploying the OpenRestream API does not end worker-owned transports."
 // The API runs as its own process; a fake worker process owns a live session. The API is stopped
 // (SIGTERM, as systemd does on a deploy), the session stays live and its lease keeps being renewed
 // by the worker; a new API process starts and serves the same live session.
@@ -10,7 +10,7 @@ const { load } = require('../server/config');
 const { openRuntime } = require('../server/store');
 
 if (!multiProcess()) {
-    console.log('api-restart: skipped (OpenRe processes sharing one database need PostgreSQL: npm run test:pg)');
+    console.log('api-restart: skipped (OpenRestream processes sharing one database need PostgreSQL: npm run test:pg)');
     process.exit(0);
 }
 const t = suite('api-restart');
