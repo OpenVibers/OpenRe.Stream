@@ -103,7 +103,7 @@ Network" below.
 
 ## Auth
 
-Services call with an OpenVibe.Network client-credentials token (audience `openvibe.openre`), verified offline against the Network JWKS; each route checks one capability. A service may send `X-OV-Subject: usr_…` to act for one owner (it is then limited to that owner's streams). Browsers/owners use the Network user JWT (`ov_token` cookie from `/auth/login`, or Bearer) and act on their own streams; Network role `admin` is staff (read all, end sessions).
+Services call with an OpenVibe.Network client-credentials token (audience `openvibe.openre`), verified offline against the Network JWKS (openvibe-sdk/auth `createNetworkKeys` + `verifyServiceToken`: a key rotation is honoured on an unknown kid); each route checks one capability. A service may send `X-OV-Subject: usr_…` to act for one owner (it is then limited to that owner's streams). Browsers/owners use the Network user JWT (`ov_token` cookie from `/auth/login`, or Bearer; `verifyUserToken`, which refuses service principals and typed tokens such as realtime tickets and FedCM assertions) and act on their own streams; Network role `admin` is staff (read all, end sessions).
 
 | Capability | Routes |
 |---|---|

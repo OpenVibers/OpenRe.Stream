@@ -97,9 +97,9 @@ function createSsoRoutes({ config, auth, fetchImpl = globalThis.fetch }) {
         res.redirect(sanitizeNext(req.query.next));
     });
 
-    router.get('/me', (req, res) => {
+    router.get('/me', async (req, res) => {
         const token = (req.cookies && req.cookies[ACCESS]) || null;
-        const claims = token ? auth.verifyUser(token) : null;
+        const claims = token ? await auth.verifyUser(token) : null;
         if (!claims) return res.status(401).json({ error: 'Not authenticated' });
         const { iat, exp, aud, iss, nbf, jti, ...user } = claims;
         return res.json({ user, expires_at: exp ? exp * 1000 : null });
