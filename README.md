@@ -88,7 +88,7 @@ Node 22 (≥ 22.12 for `reusePort`): `fnm exec --using=22.22.1 npm test`.
 
 Implemented here (the service manifest's `capabilities`, audience `openvibe.openre`; routes under
 [Auth](#auth)): `openre.stream.read`, `openre.stream.write`, `openre.key.rotate`,
-`openre.session.read`, `openre.session.end`, `openre.output.read` and `openre.output.write`.
+`openre.session.read`, `openre.session.end`, `openre.output.read`, `openre.output.write` and `openre.resource.read`.
 
 Called elsewhere, as the service principal `openre` (client credentials from Network):
 
@@ -114,6 +114,9 @@ Services call with an OpenVibe.Network client-credentials token (audience `openv
 | `openre.session.end` | `POST /api/v1/sessions/:id/end` |
 | `openre.output.read` | `GET /api/v1/streams/:id/destinations`, `GET /api/v1/sessions/:id/outputs`, `GET /api/v1/destinations/:id/logs`, `GET /api/v1/outputs/:id/logs` |
 | `openre.output.write` | `POST /api/v1/streams/:id/destinations`, `PATCH`/`DELETE /api/v1/destinations/:id`, `POST /api/v1/destinations/:id/test|start|stop` |
+| `openre.resource.read` | `GET /api/v1/resources`, `GET /api/v1/resources/:ovrn` (service tokens only, loopback; kind `openre.stream`) |
+
+The resource index pages active and disabled stream definitions for OpenVibe.Services. Streams are person-owned, so summaries have no project ID or OVRN; the single-resource route returns 404 for every name.
 
 The ids were proposed in [docs/capabilities-proposal/](docs/capabilities-proposal/) with the service manifest ([docs/service-manifest-proposal.json](docs/service-manifest-proposal.json)) and are registered in `openvibe-contracts` since v0.16.0 (this repository pins v0.49.0). `server/auth/index.js` grants them with the contracts rule (exact id or `family.*`) and defers to `capabilities.check()` for every id the installed contracts know. Errors are RFC 9457 problem+json with a stable `code`.
 
@@ -307,7 +310,7 @@ control characters in sign-in's `next`, rate-limit the signed-in pages' posts an
 Part of the [OpenVibe network](https://openvibe.network). Built in the open by [OpenVibers](https://github.com/OpenVibers).
 
 <!-- versions:start -->
-- openvibe-contracts: v0.129.0
+- openvibe-contracts: v0.131.0
 - openvibe-sdk: v0.38.0
 - openvibe-shared: v3.0.0
 <!-- versions:end -->
