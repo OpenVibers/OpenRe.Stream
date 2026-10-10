@@ -74,9 +74,9 @@ test('the openre.stream vhost returns 404 for /metrics, before the catch-all', (
     // at nginx too, so a proxied request never reaches the app.
     const [apex] = serverBlocks(live(conf)).filter((b) => /^\s*server_name\s+openre\.stream\s*;/m.test(b) && /proxy_pass http:\/\/127\.0\.0\.1:4500;/m.test(b));
     assert.ok(apex, 'the apex openre.stream server block that proxies to the API');
-    const metrics = apex.search(/^\s*location\s+=\s+\/metrics\s*\{\s*return\s+404;\s*\}/m);
+    const metrics = apex.search(/^\s*location\s+~\*\s+\^\/metrics\(\/\|\$\)\s*\{\s*return\s+404;\s*\}/m);
     const catchAll = apex.search(/^\s*location\s+\/\s*\{/m);
-    assert.ok(metrics >= 0, 'location = /metrics { return 404; } is present');
+    assert.ok(metrics >= 0, 'location ~* ^/metrics(/|$) { return 404; } is present');
     assert.ok(catchAll >= 0, 'the catch-all location / is present');
     assert.ok(metrics < catchAll, 'the metrics block comes before the catch-all');
 });
