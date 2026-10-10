@@ -9,6 +9,7 @@ const t = suite('resource-index');
 const reader = serviceToken('services', ['openre.resource.read']);
 let api;
 let ids;
+let ownerIds;
 
 const get = (path, token = reader) => request(api.base, 'GET', `/api/v1/resources${path}`, { token });
 
@@ -22,15 +23,20 @@ t('summary and query functions keep the contract shape without a socket', () => 
     assert.ok(contracts.validate('common.resource-summary@1', summary).valid);
     assert.strictEqual(contracts.resources.nameOf(summary), null);
     assert.strictEqual(filtersOf({ project: 'bad' }).error, 'project must be a prj_ id');
-    assert.deepStrictEqual(filtersOf({}), { project: null, kind: null, limit: 100, cursor: null });
+    assert.strictEqual(filtersOf({ owner: OWNER }).owner, OWNER);
+    assert.strictEqual(filtersOf({ owner: 'agt_01J0000000000000000000000A' }).owner, 'agt_01J0000000000000000000000A');
+    assert.strictEqual(filtersOf({ owner: '' }).owner, null);
+    assert.deepStrictEqual(filtersOf({}), { project: null, owner: null, kind: null, limit: 100, cursor: null });
 });
 
 t('boot and list schema, ordered rows, and safe summary fields', async () => {
     api = await bootApi();
     const a = (await api.rt.store.definitions.create({ owner_subject: OWNER, title: 'First stream' })).definition;
     const b = (await api.rt.store.definitions.create({ owner_subject: OTHER, title: 'Second stream' })).definition;
+    const c = (await api.rt.store.definitions.create({ owner_subject: OWNER, title: 'Third stream' })).definition;
     const archived = (await api.rt.store.definitions.create({ owner_subject: OWNER, title: 'Archived' })).definition;
-    ids = [a.id, b.id].sort();
+    ids = [a.id, b.id, c.id].sort();
+    ownerIds = [a.id, c.id].sort();
     await api.rt.db.prepare("UPDATE stream_definitions SET state = 'disabled' WHERE id = ?").run(b.id);
     await api.rt.db.prepare("UPDATE stream_definitions SET state = 'archived' WHERE id = ?").run(archived.id);
     const page = await get('');
@@ -67,6 +73,41 @@ t('cursor visits each row exactly once and filters follow person ownership', asy
     assert.strictEqual((await get('?project=bad')).status, 400);
     assert.strictEqual((await get('?cursor=bad')).status, 400);
     assert.strictEqual((await get('?limit=1001')).status, 400);
+});
+
+t('owner filters exact subjects across kinds and cursor pages', async () => {
+    const page = await get(`?owner=${OWNER}`);
+    assert.strictEqual(page.status, 200, page.text);
+    const validation = contracts.validate('common.resource-list-result@1', page.body);
+    assert.ok(validation.valid, JSON.stringify(validation.errors));
+    assert.deepStrictEqual(page.body.resources.map((s) => s.id), ownerIds);
+    assert.ok(page.body.resources.every((s) => s.owner.id === OWNER));
+    assert.strictEqual(page.body.next_cursor, null);
+
+    const withKind = await get(`?owner=${OWNER}&kind=openre.stream`);
+    assert.deepStrictEqual(withKind.body.resources.map((s) => s.id), ownerIds);
+    assert.deepStrictEqual((await get(`?owner=${OWNER}&kind=unknown.kind`)).body, { resources: [], next_cursor: null });
+    assert.deepStrictEqual((await get(`?owner=${OWNER}&project=prj_01J0000000000000000000000A`)).body, { resources: [], next_cursor: null });
+    assert.deepStrictEqual((await get('?owner=agt_01J0000000000000000000000A')).body, { resources: [], next_cursor: null });
+
+    const malformedProject = await get('?project=bad');
+    for (const owner of ['svc:live', 'usr_short']) {
+        const malformedOwner = await get(`?owner=${encodeURIComponent(owner)}`);
+        assert.strictEqual(malformedOwner.status, malformedProject.status);
+        assert.strictEqual(malformedOwner.body.code, malformedProject.body.code);
+    }
+
+    const visited = [];
+    let cursor = null;
+    do {
+        const next = await get(`?owner=${OWNER}&limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+        assert.strictEqual(next.status, 200, next.text);
+        const result = contracts.validate('common.resource-list-result@1', next.body);
+        assert.ok(result.valid, JSON.stringify(result.errors));
+        visited.push(...next.body.resources.map((s) => s.id));
+        cursor = next.body.next_cursor;
+    } while (cursor);
+    assert.deepStrictEqual(visited, ownerIds);
 });
 
 // An OVRN carries a slash (<type>/<id>): callers (OpenVibe.Services included) encode it as one path segment.

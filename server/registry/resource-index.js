@@ -1,5 +1,6 @@
 'use strict';
-/** OpenRestream's authority index for OpenVibe.Services (ADR-048). Stream definitions are person-owned. */
+/** OpenRestream's authority index for OpenVibe.Services (ADR-048). Stream definitions are person-owned.
+ * GET /api/v1/resources accepts project, kind, owner, cursor, and limit query parameters. */
 const express = require('express');
 const contracts = require('openvibe-contracts');
 
@@ -7,6 +8,7 @@ const SERVICE = 'openre';
 const KIND = 'openre.stream';
 const PROJECT_ID_RE = /^prj_[0-9A-HJKMNP-TV-Z]{26}$/;
 const USER_SUBJECT_RE = /^usr_[0-9A-HJKMNP-TV-Z]{26}$/;
+const OWNER_SUBJECT_RE = /^(usr|agt)_[0-9A-HJKMNP-TV-Z]{26}$/;
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;
 
@@ -36,6 +38,8 @@ function decodeCursor(raw) {
 function filtersOf(query) {
     const project = query.project === undefined || query.project === '' ? null : query.project;
     if (project !== null && (typeof project !== 'string' || !PROJECT_ID_RE.test(project))) return { error: 'project must be a prj_ id' };
+    const owner = query.owner === undefined || query.owner === '' ? null : query.owner;
+    if (owner !== null && (typeof owner !== 'string' || !OWNER_SUBJECT_RE.test(owner))) return { error: 'owner must be a usr_ or agt_ id' };
     const kind = typeof query.kind === 'string' && query.kind !== '' ? query.kind : null;
     let limit = DEFAULT_LIMIT;
     if (typeof query.limit === 'string' && query.limit !== '') {
@@ -47,7 +51,7 @@ function filtersOf(query) {
         cursor = decodeCursor(query.cursor);
         if (!cursor) return { error: 'cursor is not one this index issued' };
     }
-    return { project, kind, limit, cursor };
+    return { project, owner, kind, limit, cursor };
 }
 
 function router({ db, guard }) {
@@ -67,7 +71,8 @@ function router({ db, guard }) {
         const f = filtersOf(req.query);
         if (f.error) return problem(req, res, 400, 'resources.bad_query', f.error);
         if (f.project || (f.kind && f.kind !== KIND)) return res.set('Cache-Control', 'private, max-age=60').json({ resources: [], next_cursor: null });
-        const rows = await db.prepare("SELECT id, owner_subject, title, state, created_at, updated_at FROM stream_definitions WHERE state != 'archived' AND id > ? ORDER BY id LIMIT ?").all(f.cursor || '', f.limit + 1);
+        const ownerClause = f.owner ? ' AND owner_subject = ?' : '';
+        const rows = await db.prepare(`SELECT id, owner_subject, title, state, created_at, updated_at FROM stream_definitions WHERE state != 'archived' AND id > ?${ownerClause} ORDER BY id LIMIT ?`).all(f.cursor || '', ...(f.owner ? [f.owner] : []), f.limit + 1);
         const resources = rows.slice(0, f.limit).map(streamSummary);
         const next_cursor = rows.length > f.limit ? encodeCursor(rows[f.limit - 1]) : null;
         return res.set('Cache-Control', 'private, max-age=60').json({ resources, next_cursor });
