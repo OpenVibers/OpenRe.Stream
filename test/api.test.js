@@ -2,7 +2,9 @@
 // openre-api: capability guards, owner scoping, keys shown once, destination secrets never
 // returned, problem+json, rotation and end requests over HTTP, the playback descriptor.
 const assert = require('assert');
-const { bootApi, request, serviceToken, userToken, suite, OWNER, OTHER } = require('./helpers');
+const crypto = require('crypto');
+const { serviceAuth } = require('openvibe-contracts');
+const { bootApi, request, serviceToken, userToken, suite, OWNER, OTHER, ISSUER, privateKey } = require('./helpers');
 
 const t = suite('api');
 let api;
@@ -65,6 +67,25 @@ t('anonymous and ungranted callers are refused with problem+json', async () => {
     assert.strictEqual(wrongAud.status, 401);
     const badSubject = await request(api.base, 'GET', '/api/v1/streams', { token: live, headers: { 'X-OV-Subject': 'not-a-subject' } });
     assert.strictEqual(badSubject.status, 400);
+});
+
+t('a typed Network token (a realtime ticket, a FedCM assertion) is never a session, as a Bearer or the cookie', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    // Network signs both with the session key; only typ/purpose tell them apart from a session token.
+    const typed = (extra) => serviceAuth.signServiceToken({
+        sub: OWNER, subject_id: OWNER, iss: ISSUER, aud: ['openvibe.network', 'openvibe.openre'], iat: now, exp: now + 120,
+        jti: `rtk_${crypto.randomBytes(12).toString('hex')}`, ...extra,
+    }, privateKey);
+    for (const token of [typed({ typ: 'realtime', purpose: 'realtime' }), typed({ typ: 'fedcm' }), typed({ purpose: 'export' })]) {
+        const bearer = await request(api.base, 'GET', '/api/v1/streams', { token });
+        assert.strictEqual(bearer.status, 401, JSON.stringify(bearer.body));
+        assert.strictEqual(bearer.body.code, 'token.invalid');
+        const me = await request(api.base, 'GET', '/auth/me', { cookie: `ov_token=${token}` });
+        assert.strictEqual(me.status, 401, 'not signed in with it');
+    }
+    const session = await request(api.base, 'GET', '/auth/me', { cookie: `ov_token=${owner}` });
+    assert.strictEqual(session.status, 200, 'the session token itself still signs in');
+    assert.strictEqual(session.body.user.subject_id, OWNER);
 });
 
 let streamId;

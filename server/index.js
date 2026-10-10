@@ -12,13 +12,14 @@ const path = require('path');
 const { gracefulStop } = require('openvibe-sdk/service');
 const { load } = require('./config');
 const { openRuntime } = require('./store');
-const { createKeyStore, createAuth } = require('./auth');
+const { createNetworkKeys } = require('openvibe-sdk/auth');
+const { createAuth } = require('./auth');
 const { createApp } = require('./app');
 
 async function start({ config, clock, fetchImpl = globalThis.fetch, log = console, listen = true, db } = {}) {
     config = config || load();
     const rt = await openRuntime({ config, clock, fetchImpl, log, db });
-    const keys = createKeyStore({ urls: [config.networkInternalUrl, config.networkUrl], pem: config.networkPublicKey, fetchImpl, log });
+    const keys = createNetworkKeys({ network: config.networkInternalUrl, publicKey: config.networkPublicKey, fetch: fetchImpl, log });
     const auth = createAuth({ config, keys });
     const app = createApp({ rt, auth, keys, log, fetchImpl });
     const keyLoaded = keys.start().catch(() => null);

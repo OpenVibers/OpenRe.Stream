@@ -4,77 +4,33 @@
  *
  *   { kind: 'service', sub: 'svc:live', claims, subject: 'usr_…'|null }
  *       An OpenVibe.Network client-credentials token (RS256, audience openvibe.openre), verified
- *       offline. Each route checks ONE capability (guard('openre.<noun>.<verb>')). A service may
+ *       offline (openvibe-sdk/auth verifyServiceToken with the pinned openvibe-contracts rules and the
+ *       key the token's kid names). Each route checks ONE capability (guard('openre.<noun>.<verb>')). A service may
  *       name the person it acts for in X-OV-Subject; it is then limited to that owner's streams.
  *       Without it the grant applies to every stream (first-party integrations such as Live's
  *       mirror read sessions for any channel that opted in).
  *   { kind: 'user', subject: 'usr_…', staff, claims }
- *       A browser/owner with the Network user JWT (ov_token cookie or Bearer). Owners act on
- *       their own streams; Network role admin is staff (read everything, end sessions).
+ *       A browser/owner with the Network user JWT (ov_token cookie or Bearer; openvibe-sdk/auth
+ *       verifyUserToken, which refuses service principals and typed tokens such as a realtime ticket
+ *       or a FedCM assertion). Owners act on their own streams; Network role admin is staff (read
+ *       everything, end sessions).
  *   { kind: 'anonymous' }
  *
  * The capability ids are proposed in docs/capabilities-proposal/ and are not in openvibe-contracts
  * yet. Until the release that defines them, allows() grants them with the contracts rule (exact id
  * or a `family.*` grant) and hands the decision to capabilities.check() once contracts know the id
  * (the same bridge OpenVibe.Events used).
+ *
+ * The keys are openvibe-sdk/auth createNetworkKeys (server/index.js): a pinned OV_NETWORK_PUBLIC_KEY, or Network's
+ * JWKS with a rotation honoured on an unknown kid and the last good keys kept through an outage.
  */
-const crypto = require('crypto');
-const { serviceAuth, capabilities, http, ids } = require('openvibe-contracts');
+const contracts = require('openvibe-contracts');
+const sdkAuth = require('openvibe-sdk/auth');
+
+const { capabilities, http, ids } = contracts;
 
 const PRINCIPAL_SUB = /^(svc|app|mod):/;
 const STAFF_ROLES = new Set(['admin']);
-
-// ── Network public key ─────────────────────────────────────────
-
-function createKeyStore({ urls = [], pem = null, fetchImpl = globalThis.fetch, log = console } = {}) {
-    let key = pem ? toPem(pem) : null;
-    let retryTimer = null;
-    let refreshTimer = null;
-
-    function toPem(value) { return crypto.createPublicKey(value).export({ type: 'spki', format: 'pem' }); }
-
-    async function fetchOnce() {
-        for (const base of urls) {
-            if (!base) continue;
-            const url = `${base}/api/.well-known/jwks`;
-            try {
-                const res = await fetchImpl(url, { signal: AbortSignal.timeout(8000) });
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const body = await res.json();
-                const jwk = (body.keys || []).find(k => k.kty === 'RSA');
-                if (jwk) key = toPem({ key: jwk, format: 'jwk' });
-                else if (typeof body.public_key === 'string' && body.public_key.includes('BEGIN')) key = toPem(body.public_key);
-                else throw new Error('no RSA key in response');
-                log.log(`[auth] Network public key loaded from ${base}`);
-                return key;
-            } catch (err) {
-                log.warn(`[auth] key fetch from ${url} failed: ${err.message}`);
-            }
-        }
-        return null;
-    }
-
-    async function start() {
-        if (pem) return Promise.resolve(key);
-        const attempt = async () => {
-            try {
-                const k = await fetchOnce();
-                if (!k && !key) { retryTimer = setTimeout(() => { attempt().catch(() => {}); }, 30000); retryTimer.unref?.(); }
-                return k;
-            } catch (err) {
-                // The retry timer never awaits the attempt it starts: an unhandled rejection would
-                // end the API process (Node 22) over one failed Network key fetch.
-                log.warn(`[auth] key retry failed: ${err.message}`);
-                return null;
-            }
-        };
-        refreshTimer = setInterval(() => { fetchOnce().catch(() => {}); }, 6 * 60 * 60 * 1000);
-        refreshTimer.unref?.();
-        return await attempt();
-    }
-
-    return { get: () => key, loaded: () => Boolean(key), start, stop() { clearTimeout(retryTimer); clearInterval(refreshTimer); }, fetchOnce };
-}
 
 // ── Capabilities ───────────────────────────────────────────────
 
@@ -93,27 +49,6 @@ function allows(claims, id) {
 // ── Tokens ─────────────────────────────────────────────────────
 
 const b64json = (s) => JSON.parse(Buffer.from(String(s), 'base64url').toString('utf8'));
-
-function verifyUserJwt(token, { publicKey, issuer, audiences, now = Date.now() }) {
-    if (!publicKey || typeof token !== 'string') return null;
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    try {
-        const header = b64json(parts[0]);
-        if (header.alg !== 'RS256') return null;
-        if (!crypto.verify('RSA-SHA256', Buffer.from(`${parts[0]}.${parts[1]}`), publicKey, Buffer.from(parts[2], 'base64url'))) return null;
-        const claims = b64json(parts[1]);
-        const t = Math.floor(now / 1000);
-        if (typeof claims.exp !== 'number' || claims.exp + 30 < t) return null;
-        if (issuer && claims.iss !== issuer) return null;
-        const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-        if (!aud.some(a => audiences.includes(a))) return null;
-        if (claims.actor_type || PRINCIPAL_SUB.test(String(claims.sub))) return null;
-        return claims;
-    } catch {
-        return null;
-    }
-}
 
 function bearer(req) {
     const h = String(req.headers.authorization || '');
@@ -141,14 +76,18 @@ class AuthError extends Error {
 }
 
 function createAuth({ config, keys }) {
-    function verifyService(token) {
-        const publicKey = keys.get();
-        if (!publicKey) return { ok: false, code: 'token.unavailable', reason: 'signing key not loaded yet' };
-        return serviceAuth.verifyServiceToken(token, { publicKey, issuer: config.issuer, audience: config.audience });
+    /** → { ok: true, claims } | { ok: false, code, reason }; token.unavailable while no key has loaded. */
+    async function verifyService(token) {
+        return await sdkAuth.verifyServiceToken(token, { ...keys.verifyOptions, issuer: config.issuer, audience: config.audience, contracts });
     }
 
-    function verifyUser(token) {
-        return verifyUserJwt(token, { publicKey: keys.get(), issuer: config.issuer, audiences: config.userAudiences });
+    /** A person's session token → its claims, or null. */
+    async function verifyUser(token) {
+        try {
+            return await sdkAuth.verifyUserToken(token, { ...keys.verifyOptions, issuer: config.issuer, audience: config.userAudiences });
+        } catch {
+            return null;
+        }
     }
 
     function userCaller(claims, token) {
@@ -160,13 +99,13 @@ function createAuth({ config, keys }) {
      * resolve(req, { services }) — services: false for server-rendered pages (a service token is
      * no identity there). A presented service token must verify: it is never downgraded.
      */
-    function resolve(req, { services = true } = {}) {
+    async function resolve(req, { services = true } = {}) {
         const token = bearer(req);
         if (token) {
             const payload = decodePayload(token);
             if (payload && PRINCIPAL_SUB.test(String(payload.sub))) {
                 if (!services) return { kind: 'anonymous' };
-                const r = verifyService(token);
+                const r = await verifyService(token);
                 if (!r.ok) throw new AuthError(r.code === 'token.unavailable' ? 503 : 401, r.code, r.reason);
                 const subjectHeader = req.get('x-ov-subject');
                 let subject = null;
@@ -176,26 +115,26 @@ function createAuth({ config, keys }) {
                 }
                 return { kind: 'service', sub: r.claims.sub, claims: r.claims, subject };
             }
-            const claims = verifyUser(token);
+            const claims = await verifyUser(token);
             if (claims) return userCaller(claims, token);
             if (!keys.loaded()) throw new AuthError(503, 'token.unavailable', 'signing key not loaded yet');
             throw new AuthError(401, 'token.invalid', 'token does not verify');
         }
         const fromCookie = cookie(req, 'ov_token');
-        const claims = fromCookie ? verifyUser(fromCookie) : null;
+        const claims = fromCookie ? await verifyUser(fromCookie) : null;
         if (claims) return userCaller(claims, fromCookie);
         return { kind: 'anonymous' };
     }
 
     function middleware(opts) {
         return (req, res, next) => {
-            try {
-                req.caller = resolve(req, opts);
+            resolve(req, opts).then((caller) => {
+                req.caller = caller;
                 next();
-            } catch (err) {
+            }, (err) => {
                 if (!(err instanceof AuthError)) return next(err);
                 http.sendProblem(res, err.status, err.code, { detail: err.message, ctx: req.ov });
-            }
+            });
         };
     }
 
@@ -240,4 +179,4 @@ function createAuth({ config, keys }) {
     return { resolve, middleware, guard, canAccess, actorOf, verifyService, verifyUser };
 }
 
-module.exports = { createKeyStore, createAuth, allows, hasCap, verifyUserJwt, bearer, cookie, AuthError };
+module.exports = { createAuth, allows, hasCap, bearer, cookie, AuthError };
