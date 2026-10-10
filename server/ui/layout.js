@@ -25,11 +25,11 @@ main.ore{max-width:1040px;margin:0 auto;padding:24px 16px 64px}
 .ore form.inline{display:inline}.ore label{display:block;margin:.4em 0 .15em;color:var(--ore-muted);font-size:.88rem}
 .ore input[type=text],.ore input[type=password],.ore input[type=number],.ore select,.ore textarea{width:100%;box-sizing:border-box;background:#0a0f18;color:var(--ore-text);border:1px solid var(--ore-line);border-radius:6px;padding:7px 9px}
 .ore .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
-.ore button{background:var(--ore-accent);color:#fff;border:0;border-radius:6px;padding:7px 12px;cursor:pointer;font-weight:600;margin:6px 6px 0 0}
-.ore button.secondary{background:#334155}.ore button.danger{background:var(--ore-bad)}
+:where(.ore) button{background:var(--accent-strong,#3472d8);color:var(--on-accent-strong,#fff);border:0;border-radius:6px;padding:7px 12px;cursor:pointer;font-weight:600;margin:6px 6px 0 0}
+:where(.ore) button.secondary{background:#334155;color:#fff}:where(.ore) button.danger{background:#dc2626;color:#fff}
 .ore .pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:.8rem;font-weight:600;background:#334155}
 .ore .pill.live,.ore .pill.ok{background:var(--ore-ok);color:#04110a}.ore .pill.starting,.ore .pill.ending,.ore .pill.pending,.ore .pill.error,.ore .pill.draining{background:var(--ore-warn);color:#1a1000}
-.ore .pill.failed,.ore .pill.lost{background:var(--ore-bad)}
+.ore .pill.failed,.ore .pill.lost{background:#b91c1c;color:#fff}
 .ore .flash{border-left:4px solid var(--ore-accent);padding:8px 12px;background:var(--ore-panel);margin:12px 0}.ore .flash.bad{border-color:var(--ore-bad)}
 @media (max-width:640px){.ore th:nth-child(n+4),.ore td:nth-child(n+4){display:none}}
 `;
