@@ -6,6 +6,7 @@ const cookieParser = require('cookie-parser');
 const contracts = require('openvibe-contracts');
 const { createDiscoveryRoutes } = require('./discovery');
 const { createV1Router } = require('./api/v1');
+const resourceIndex = require('./registry/resource-index');
 const { createSsoRoutes } = require('./auth/sso');
 const { createUiRouter } = require('./ui/routes');
 const pkg = require('../package.json');
@@ -133,7 +134,9 @@ function createApp({ rt, auth, keys, log = console, fetchImpl }) {
     const v1 = createV1Router({ rt, auth, liveLink });
     // Per-actor limits on a signed-in person's writes (server/api/actor-limits.js; roadmap WS-R task 4).
     const actorLimits = require('./api/actor-limits').createOpenReActorLimits({ registry: metrics.registry, valkey });
-    app.use('/api/v1', apiJson, auth.middleware({ services: true }), actorLimits, v1.router);
+    app.use('/api/v1', apiJson, auth.middleware({ services: true }), actorLimits);
+    app.use('/api/v1/resources', resourceIndex.router({ db, guard: auth.guard('openre.resource.read') }));
+    app.use('/api/v1', v1.router);
 
     // Public HTTP-FLV playback of a live session, proxied from the worker that holds it. A viewer
     // deploy of this API interrupts viewers of this URL (they reconnect), never the ingest.

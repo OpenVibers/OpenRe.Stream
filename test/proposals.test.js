@@ -33,4 +33,16 @@ t('the service manifest proposal validates and lists exactly the guarded capabil
     assert.deepStrictEqual([...manifest.eventsProduced].sort(), Object.values(TYPES).sort());
 });
 
+t('the active resource capability names both guarded index routes', () => {
+    const resource = JSON.parse(fs.readFileSync(path.join(ROOT, 'node_modules', 'openvibe-contracts', 'manifests', 'capabilities', 'openre.resource.read.json'), 'utf8'));
+    assert.deepStrictEqual(resource.implementedBy, ['GET /api/v1/resources', 'GET /api/v1/resources/:ovrn']);
+    const code = fs.readFileSync(path.join(ROOT, 'server', 'registry', 'resource-index.js'), 'utf8');
+    assert.match(code, /r\.get\('\/', guard,/);
+    assert.match(code, /r\.get\('\/:ovrn', guard,/);
+    const app = fs.readFileSync(path.join(ROOT, 'server', 'app.js'), 'utf8');
+    assert.match(app, /resourceIndex\.router\(\{ db, guard: auth\.guard\('openre\.resource\.read'\) \}\)/);
+    const status = JSON.parse(fs.readFileSync(path.join(ROOT, 'STATUS.json'), 'utf8'));
+    assert.ok(status.capabilities.includes(resource.id));
+});
+
 t.run();
