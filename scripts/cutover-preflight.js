@@ -30,9 +30,9 @@
  * trust (GET, `{host}` and `{port}` replaced, JSON answer with a boolean `open` or `reachable`).
  *
  * OpenRestream and Events serve from PostgreSQL (ADR-035): their databases are read through the DATABASE_URL of their env
- * files (--openre-db / --events-db take env:<file>, a postgres:// URL or a SQLite file); Live's is still its SQLite file.
+ * files (--openre-db / --events-db / --live-db take env:<file> or a postgres:// URL).
  *
- * Nothing is written anywhere: files are opened read-only and PostgreSQL is read in READ ONLY transactions, no secret value is
+ * Nothing is written anywhere: PostgreSQL is read in READ ONLY transactions, no secret value is
  * printed, the only network traffic is DNS, one GET to /api/ready and one TCP connection with an
  * RTMP handshake (no publish). Exit 0 when no check FAILs (--strict: also no WARN/MANUAL).
  */
@@ -43,6 +43,7 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
+const { parseEnvFile, liveDbUrl, openLiveDb } = require('./lib/live-db');
 
 const DEFAULTS = Object.freeze({
     root: '/opt/openre.stream',
@@ -50,7 +51,7 @@ const DEFAULTS = Object.freeze({
     liveEnv: '/etc/openvibe/live.env',
     openreDb: 'env:/etc/openvibe/openre.env',
     eventsDb: 'env:/etc/openvibe/events.env',
-    liveDb: '/opt/openvibe.live/data/live.db',
+    liveDb: 'env:/etc/openvibe/live.env',
     api: 'http://127.0.0.1:4500',
     openreUrl: 'http://127.0.0.1:4500',
     liveUnit: 'openvibe-live.service',
@@ -65,12 +66,6 @@ const CHECKS = Object.freeze(['release', 'service', 'env', 'bind', 'dns', 'port'
 const WORKER_KINDS = Object.freeze(['rtmp-ingest', 'restream']);
 
 // ── helpers ─────────────────────────────────────────────────────────────────
-
-/** KEY=VALUE lines (systemd EnvironmentFile / dotenv); null when the file cannot be read. */
-function parseEnvFile(text) {
-    if (text == null) return null;
-    return require('dotenv').parse(String(text));
-}
 
 const isLoopback = (a) => /^127\./.test(a) || a === '::1' || a === 'localhost' || /^::ffff:127\./.test(a);
 const isWildcard = (a) => a === '0.0.0.0' || a === '::' || a === '*' || a === '[::]';
@@ -139,20 +134,13 @@ function realDeps() {
         interfaces: () => os.networkInterfaces(),
         probe: rtmpProbe,
         fetch: (url, opts) => fetch(url, opts),
-        openDb: (target) => {
-            if (/^postgres(ql)?:\/\//.test(target)) {
-                const silent = { log() {}, info() {}, warn() {}, error() {} };
-                return require('openvibe-sdk/db').createDb({ url: target, service: 'openre-preflight', max: 1, log: silent });
-            }
-            const Database = require('better-sqlite3');
-            return new Database(target, { readonly: true, fileMustExist: true });
-        },
+        openDb: (target) => openLiveDb(liveDbUrl(target, () => null), 'openre-preflight'),
     };
 }
 
 /**
- * fn(db, kind) on a read-only handle. `target`: env:<file> (that file's DATABASE_URL, never printed), a postgres:// URL
- * or a SQLite file. PostgreSQL is read in one READ ONLY transaction (a write fails); SQLite is opened read-only.
+ * fn(db, kind) on a read-only handle. `target`: env:<file> (that file's DATABASE_URL, never printed), or a postgres:// URL.
+ * PostgreSQL is read in one READ ONLY transaction (a write fails).
  */
 async function withDb(deps, target, fn) {
     let where = String(target);
@@ -167,13 +155,10 @@ async function withDb(deps, target, fn) {
             if (!env.DATABASE_URL) return { error: `${file} has no DATABASE_URL` };
             url = env.DATABASE_URL;
         } else if (/^postgres(ql)?:\/\//.test(where)) where = 'the PostgreSQL URL given';
-        db = await deps.openDb(url);
+        db = await deps.openDb(liveDbUrl(url, () => null));
     } catch (err) { return { error: `cannot open ${where} read-only: ${err.message}` }; }
     try {
-        if (typeof db.tx === 'function') {
-            return await db.tx(async () => { await db.exec('SET TRANSACTION READ ONLY'); return await fn(db, 'postgresql'); });
-        }
-        return await fn(db, 'sqlite');
+        return await db.tx(async () => { await db.exec('SET TRANSACTION READ ONLY'); return await fn(db, 'postgresql'); });
     } catch (err) {
         return { error: `${where}: ${err.message}` };
     } finally { try { await db.close(); } catch { /* read-only */ } }
@@ -344,30 +329,25 @@ async function checkPort(ctx) {
 }
 
 async function checkDb(ctx) {
-    const r = await withDb(ctx.deps, ctx.opts.openreDb, async (db, kind) => {
+    const r = await withDb(ctx.deps, ctx.opts.openreDb, async (db) => {
         let integrity = 'ok';
         let fk = 0;
-        if (kind === 'sqlite') {
-            integrity = (await db.prepare('PRAGMA integrity_check').all()).map((x) => Object.values(x)[0]).join('; ');
-            fk = (await db.prepare('PRAGMA foreign_key_check').all()).length;
-        } else {
-            // PostgreSQL checks every key on write: what can still be wrong is a data page (checksums) or a key added NOT VALID.
-            const c = await db.prepare('SELECT checksum_failures AS n FROM pg_stat_database WHERE datname = current_database()').get();
-            if (c && Number(c.n) > 0) integrity = `${c.n} data checksum failure(s)`;
-            fk = Number((await db.prepare("SELECT count(*) AS n FROM pg_constraint WHERE contype = 'f' AND NOT convalidated").get()).n);
-        }
+        // PostgreSQL checks every key on write: what can still be wrong is a data page (checksums) or a key added NOT VALID.
+        const c = await db.prepare('SELECT checksum_failures AS n FROM pg_stat_database WHERE datname = current_database()').get();
+        if (c && Number(c.n) > 0) integrity = `${c.n} data checksum failure(s)`;
+        fk = Number((await db.prepare("SELECT count(*) AS n FROM pg_constraint WHERE contype = 'f' AND NOT convalidated").get()).n);
         const counts = {};
         for (const t of ['stream_definitions', 'ingest_keys', 'ingest_sessions', 'destinations', 'migration_map']) {
             try { counts[t] = (await db.prepare(`SELECT count(*) AS n FROM ${t}`).get()).n; } catch { counts[t] = null; }
         }
-        return { integrity, fk, kind, counts };
+        return { integrity, fk, counts };
     });
     if (r.error) return ['FAIL', r.error];
     const counts = Object.entries(r.counts).map(([k, v]) => `${k} ${v == null ? '?' : v}`).join(', ');
-    const what = r.kind === 'sqlite' ? 'integrity_check' : 'PostgreSQL data checksums';
+    const what = 'PostgreSQL data checksums';
     if (r.integrity !== 'ok') return ['FAIL', `${what} = ${r.integrity.slice(0, 300)}`];
-    if (r.fk) return ['FAIL', `${what} ok, but ${r.fk} foreign key ${r.kind === 'sqlite' ? 'violation(s)' : 'constraint(s) not validated'}`];
-    return ['PASS', `${what} ok, no foreign key ${r.kind === 'sqlite' ? 'violations' : 'left unvalidated'} (${counts})`];
+    if (r.fk) return ['FAIL', `${what} ok, but ${r.fk} foreign key constraint(s) not validated`];
+    return ['PASS', `${what} ok, no foreign key left unvalidated (${counts})`];
 }
 
 async function checkLiveEnv(ctx) {
