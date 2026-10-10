@@ -46,7 +46,7 @@ Everything below runs on the host. The scripts ship with the release (`scripts/`
 |---|---|---|
 | `cutover-preflight.js` | read-only checks: `release service env bind dns port db live-env events [slot]` (`--only`, `--skip`, `--slot <id>`, `--json`, `--strict`, `--expect-release <sha>`, `--probe-url`, `--host-ip`) | nothing |
 | `subscribe-live-events.js` | Live's Events subscription `openre.session.*` → Live, **as Live** (reads `/etc/openvibe/live.env`); `--dry-run`, `--disable`, `--enable` | one subscription in Events |
-| `migrate-from-live.js` | imports slots and destinations from a Live **snapshot** (dry run unless `--apply`) | the PostgreSQL store (`ov_openre`) |
+| `migrate-from-live.js` | imports slots and destinations from Live PostgreSQL in a read-only transaction (dry run unless `--apply`) | the PostgreSQL store (`ov_openre`) |
 | `set-definition-state.js` | disables or re-enables one slot's OpenRestream definition, **as Live** (per-slot rollback) | the PostgreSQL store (`ov_openre`) via the API |
 
 Shell helpers for the session (paste once per SSH session):
@@ -209,7 +209,7 @@ refuses that user's personal RTMP key (`refusesLiveIngest`).
    openre.stream UI is not public yet (B0). Avoid Twitch for the rehearsal: Twitch is rewritten to
    `rtmps://`, and this host has no OpenSSL ffmpeg (`OPENRE_FFMPEG_OPENSSL_PATH` is unset). Tell the
    agent the slot id.
-2. **AGENT:** snapshot, then migrate that slot (commands in B2), then `pf --only slot --slot <id>`.
+2. **AGENT:** migrate that slot (commands in B2), then `pf --only slot --slot <id>`.
 3. **OWNER:** switch it with `await api('/admin/openre/managed/<id>/ingest-authority', { method: 'PUT', body: { authority: 'openre' } })`.
    On the Go Live page, press **Regenerate stream key**. The OpenRestream key is shown once. In OBS, set
    the server to `rtmp://ingest.openre.stream:1936/live` and paste the key. Start streaming.
@@ -271,17 +271,12 @@ during the window.
 ```bash
 ID=<Live managed stream id>
 pf --only service,db,live-env,events,slot --slot $ID      # slot offline, owner has a subject, RTMP slot
-SNAP=/var/lib/openre/live-snapshot-$(date -u +%Y%m%d-%H%M%S).db
-sudo sqlite3 -readonly /opt/openvibe.live/data/live.db ".backup $SNAP"
-sudo sqlite3 "$SNAP" "PRAGMA journal_mode=DELETE;"         # a .backup copy is WAL; the migration opens it read-only as ubuntu
-sudo chown ubuntu:ubuntu "$SNAP" && sudo chmod 600 "$SNAP"  # it holds every Live user and stream key
-openre_as_service "node scripts/migrate-from-live.js --live-db $SNAP --slots $ID"            # dry run
-openre_as_service "node scripts/migrate-from-live.js --live-db $SNAP --slots $ID --apply"    # import + checklist
-sudo rm -f "$SNAP"
+openre_as_service "node scripts/migrate-from-live.js --live-db env:/etc/openvibe/live.env --slots $ID"          # dry run
+openre_as_service "node scripts/migrate-from-live.js --live-db env:/etc/openvibe/live.env --slots $ID --apply"  # import + checklist
 pf --only slot --slot $ID       # OpenRestream <id> (active, mirrored); N destination(s), held ones counted
 ```
 
-- The migration imports the slot as a definition with a **new key that nobody has seen**. Old keys
+- The migration reads production Live directly in a read-only PostgreSQL transaction and imports the slot as a definition with a **new key that nobody has seen**. Old keys
   are never imported. It also imports the slot's restream destinations, keys sealed. Destinations
   on private hosts, and the unbound destinations of a user with several slots, are **held**
   (disabled, with the reason recorded in `migration_map`). It is idempotent.

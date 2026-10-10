@@ -1,7 +1,7 @@
 'use strict';
 /**
  * Import OpenVibe.Live stream slots (managed_streams) and their restream destinations from a
- * read-only snapshot of Live's database into OpenRestream (scripts/migrate-from-live.js is the CLI).
+ * read-only Live PostgreSQL database into OpenRestream (scripts/migrate-from-live.js is the CLI).
  *
  * Rules (ADR-009, plan §8.1):
  *   - Live's database is opened read-only; nothing is written to it.
@@ -19,8 +19,11 @@
 const { validateDestinationUrl } = require('./destination-url');
 
 async function columns(db, table) {
-    try { return new Set((await db.prepare(`PRAGMA table_info(${table})`).all()).map(c => c.name)); } catch { return new Set(); }
+    return new Set((await db.prepare('SELECT column_name AS name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ?').all(table)).map(c => c.name));
 }
+
+const off = (v) => v === 0 || v === false || v === '0';
+const on = (v) => v === 1 || v === true || v === '1';
 
 /**
  * The definition protocols for a Live slot (T4 decision 2): 'whip' is an input alias for 'webrtc',
@@ -35,10 +38,10 @@ function protocolOf(ms) {
 }
 
 function recordingModeOf(ms, channel) {
-    let vod = !channel ? true : Boolean(channel.vod_recording_enabled) && !channel.force_vod_recording_disabled;
-    if (vod && ms.slot_vod_recording_enabled === 0) vod = false;
+    let vod = !channel ? true : on(channel.vod_recording_enabled) && !on(channel.force_vod_recording_disabled);
+    if (vod && off(ms.slot_vod_recording_enabled)) vod = false;
     if (vod) return 'vod';
-    return ms.slot_clip_recording_enabled === 0 ? 'none' : 'clips';
+    return off(ms.slot_clip_recording_enabled) ? 'none' : 'clips';
 }
 
 function visibilityOf(ms, channel) {
@@ -53,7 +56,7 @@ function visibilityOf(ms, channel) {
 async function migrate({ liveDb, rt, apply = false, onlySlots = null, now = () => Date.now() }) {
     const { db, store, config } = rt;
     const msCols = await columns(liveDb, 'managed_streams');
-    if (!msCols.size) throw new Error('the Live snapshot has no managed_streams table');
+    if (!msCols.size) throw new Error('the Live database has no managed_streams table');
     const rdCols = await columns(liveDb, 'restream_destinations');
     const laCols = await columns(liveDb, 'linked_accounts');
     const chCols = await columns(liveDb, 'channels');
@@ -95,19 +98,19 @@ async function migrate({ liveDb, rt, apply = false, onlySlots = null, now = () =
             entry.reason = 'already imported';
             count('skipped');
         } else {
-            const subject = subjectOf ? (subjectOf.get(ms.user_id) || {}).subject_id : null;
+            const subject = subjectOf ? ((await subjectOf.get(ms.user_id)) || {}).subject_id : null;
             if (!subject) {
                 entry.status = 'held';
                 entry.reason = `Live user ${ms.user_id} has no canonical subject yet (it is recorded when they next sign in to Live); the slot is imported on a later run`;
                 await record({ source_type: 'managed_stream', source_id: String(ms.id), status: 'held', reason: entry.reason });
                 count('held');
-            } else if (ms.is_banned) {
+            } else if (on(ms.is_banned)) {
                 entry.status = 'excluded';
                 entry.reason = 'the Live account is banned';
                 await record({ source_type: 'managed_stream', source_id: String(ms.id), status: 'excluded', reason: entry.reason });
                 count('excluded');
             } else {
-                const chRow = channelOf ? channelOf.get(ms.user_id) : null;
+                const chRow = channelOf ? await channelOf.get(ms.user_id) : null;
                 const fields = {
                     owner_subject: subject,
                     title: ms.title || `${ms.display_name || ms.username}'s stream`,
@@ -137,9 +140,9 @@ async function migrate({ liveDb, rt, apply = false, onlySlots = null, now = () =
         }
 
         // Destinations: the slot's own, plus unbound ones when the user has exactly one slot.
-        const own = destsOfSlot ? destsOfSlot.all(ms.id) : [];
-        const unbound = unboundOfUser ? unboundOfUser.all(ms.user_id) : [];
-        const oneSlot = (await slotsOfUser.get(ms.user_id)).n === 1;
+        const own = destsOfSlot ? await destsOfSlot.all(ms.id) : [];
+        const unbound = unboundOfUser ? await unboundOfUser.all(ms.user_id) : [];
+        const oneSlot = Number((await slotsOfUser.get(ms.user_id)).n) === 1;
         const candidates = [...own.map(d => ({ d, unbound: false })), ...unbound.map(d => ({ d, unbound: true }))];
         for (const { d, unbound: isUnbound } of candidates) {
             const di = { live_id: d.id, platform: d.platform, name: d.name || d.platform, status: null, reason: null, destination_id: null, oauth_linked: Boolean(d.connection_id) };
@@ -173,8 +176,8 @@ async function migrate({ liveDb, rt, apply = false, onlySlots = null, now = () =
                 stream_key: d.stream_key || '',
                 srt_passphrase: d.srt_passphrase || '',
                 srt_latency_ms: d.srt_latency_ms == null ? undefined : d.srt_latency_ms,
-                enabled: Boolean(d.enabled),
-                auto_start: Boolean(d.auto_start),
+                enabled: on(d.enabled),
+                auto_start: on(d.auto_start),
                 quality_preset: ['auto', 'low', 'medium', 'high', 'ultra', 'source'].includes(d.quality_preset) ? d.quality_preset : 'auto',
                 custom_video_bitrate: d.custom_video_bitrate == null ? undefined : d.custom_video_bitrate,
                 custom_audio_bitrate: d.custom_audio_bitrate == null ? undefined : d.custom_audio_bitrate,
