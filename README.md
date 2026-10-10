@@ -185,11 +185,11 @@ sudo deploy/scripts/deploy.sh release origin/main   # ovhost deploy openre --pre
 sudo deploy/scripts/deploy.sh api [<sha>]           # ovhost deploy openre [--to <sha>]: restarts openre-api + coordinator ONLY, rolls back if not ready
 sudo deploy/scripts/deploy.sh rollback [<sha>]      # ovhost rollback openre
 sudo deploy/scripts/deploy.sh plan                  # ovhost plan openre (or DRY_RUN=1)
-sudo deploy/scripts/deploy.sh workers               # deploy-legacy.sh: starts a new worker generation; old ones drain
-sudo deploy/scripts/deploy.sh status                # deploy-legacy.sh
+sudo deploy/scripts/deploy.sh workers               # workers.sh: starts a new worker generation; old ones drain
+sudo deploy/scripts/deploy.sh status                # workers.sh
 ```
 
-- ovhost refuses an API restart while an ingest session is open (`--wait-idle` holds it, `--force` goes ahead), records every attempt (`ovhost releases openre`), prunes releases beyond five but never one a worker generation runs from, and announces the release. When ovhost is missing, too old or does not deploy OpenRestream with `release-layout`, the wrapper runs [deploy/scripts/deploy-legacy.sh](deploy/scripts/deploy-legacy.sh), the previous script, unchanged (`OVHOST_LEGACY=1` forces it). `workers`, `status` and `prune` always run it.
+- ovhost refuses an API restart while an ingest session is open (`--wait-idle` holds it, `--force` goes ahead), records every attempt (`ovhost releases openre`), prunes releases beyond five but never one a worker generation runs from, and announces the release. Without ovhost, `deploy.sh` exits 1 (there is no fallback); `workers`, `status` and `prune` run [workers.sh](deploy/scripts/workers.sh), because ovhost never starts, stops or restarts a transport worker.
 
 - An **API deploy** never restarts a worker unit (no unit depends on another). Viewers of `openre.stream/play/…` reconnect; encoders, restreams and recordings do not notice.
 - A **worker deploy** starts `openre-rtmp-ingest@<sha>`, `openre-restream-worker@<sha>` and `openre-jsmpeg@<sha>`; older instances are disabled (not stopped) and exit on their own when drained. Never `systemctl restart` a worker instance during a broadcast; `systemctl stop` starts a drain and waits up to 30 min (`TimeoutStopSec`), then kills.

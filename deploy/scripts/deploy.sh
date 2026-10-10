@@ -12,23 +12,14 @@
 #                                                   openre-session-coordinator ONLY, roll back if not ready
 #   deploy/scripts/deploy.sh rollback [<sha>]       ovhost rollback openre [--to <sha>]
 #   deploy/scripts/deploy.sh plan   (or DRY_RUN=1)  ovhost plan openre
-#   deploy/scripts/deploy.sh workers|status|prune   deploy-legacy.sh, unchanged: ovhost never starts, stops or
-#                                                   restarts a worker unit (it prunes releases itself, never
-#                                                   one a worker generation runs from)
+#   deploy/scripts/deploy.sh workers|status|prune   deploy/scripts/workers.sh: ovhost never starts, stops or restarts
+#                                                   a transport worker, so worker generations are rolled there
 #   --wait-idle / --force after deploy, api or rollback are passed on (ingest sessions refuse an API restart).
-#
-# Fallback: deploy-legacy.sh (the previous script, unchanged) with the same arguments when ovhost is missing
-# or too old (no `capabilities`, deploy-api < 1), or the host inventory does not deploy openre with strategy
-# release-layout; OVHOST_LEGACY=1 forces it. There `deploy` is `release` then `api`, and `rollback <sha>` is
-# `api <sha>`.
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
 SERVICE=openre
-STRATEGY=release-layout
 ROOT="${OPENRE_ROOT:-/opt/openre.stream}"
-HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-LEGACY="${DEPLOY_LEGACY:-$HERE/deploy-legacy.sh}"
 OVHOST="${OVHOST:-/usr/local/bin/ovhost}"
 if [ "${OVHOST_SUDO-auto}" = auto ]; then if [ "$(id -u)" -eq 0 ]; then SUDO=(); else SUDO=(sudo); fi; elif [ -n "${OVHOST_SUDO}" ]; then SUDO=("$OVHOST_SUDO"); else SUDO=(); fi
 
@@ -47,37 +38,16 @@ for a in "$@"; do
     esac
 done
 
-legacy() {
-    say "$1 — running deploy-legacy.sh (the previous deploy script) instead"
-    case "$SUB" in
-        deploy) bash "$LEGACY" release ${REF:+"$REF"} >/dev/null; exec bash "$LEGACY" api ;;
-        rollback) [ -n "$REF" ] || { say "✗ deploy-legacy.sh needs the release: rollback <sha>"; exit 1; }; exec bash "$LEGACY" api "$REF" ;;
-        plan) say "✗ deploy-legacy.sh has no plan; see deploy-legacy.sh status"; exit 1 ;;
-        *) exec bash "$LEGACY" "$SUB" ${REF:+"$REF"} ;;
-    esac
-}
-
-REASON=""
-probe() {
-    if [ "${OVHOST_LEGACY:-0}" = 1 ]; then REASON="OVHOST_LEGACY=1"; return 1; fi
-    if ! command -v "$OVHOST" >/dev/null 2>&1; then REASON="ovhost not found ($OVHOST)"; return 1; fi
-    local caps api
-    if ! caps=$("${SUDO[@]}" "$OVHOST" capabilities "$SERVICE" 2>/dev/null); then REASON="this ovhost has no 'capabilities' (too old) or no inventory entry for $SERVICE"; return 1; fi
-    api=$(printf '%s\n' "$caps" | sed -n 's/^deploy-api=//p')
-    case "$api" in ''|*[!0-9]*) REASON="this ovhost reports no deploy-api (too old)"; return 1 ;; esac
-    if [ "$api" -lt 1 ]; then REASON="this ovhost's deploy-api is $api, 1 is needed"; return 1; fi
-    if ! printf '%s\n' "$caps" | grep -qx "strategy=$STRATEGY"; then REASON="the host inventory does not deploy $SERVICE with strategy $STRATEGY ($(printf '%s\n' "$caps" | sed -n 's/^strategy=//p'))"; return 1; fi
-    if ! printf '%s\n' "$caps" | grep -qx "managed=yes"; then REASON="ovhost does not manage $SERVICE"; return 1; fi
-    return 0
-}
-
 case "$SUB" in
-    workers|status|prune) exec bash "$LEGACY" "$SUB" ${REF:+"$REF"} ;;
     deploy|release|api|rollback|plan) ;;
-    *) sed -n '2,24p' "$0"; exit 1 ;;
+    workers|status|prune) exec bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/workers.sh" "$SUB" ${REF:+"$REF"} ;;
+    *) say "unknown command: $SUB (expected deploy, release, api, rollback, plan, workers, status or prune)"; exit 1 ;;
 esac
 
-probe || legacy "$REASON"
+if ! command -v "$OVHOST" >/dev/null 2>&1; then
+    say "ERROR: ovhost not found ($OVHOST); install ovhost before deploying"
+    exit 1
+fi
 
 TO=()
 [ -n "$REF" ] && TO=(--to "$REF")
