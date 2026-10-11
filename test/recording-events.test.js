@@ -24,8 +24,14 @@ const reply = (res, status, obj) => { res.statusCode = status; res.setHeader('Co
 async function setup({ media: mediaHandler, recording_mode = 'vod' }) {
     const calls = [];
     const media = await stub((req, res, body) => { calls.push({ method: req.method, url: req.url, body, auth: req.headers.authorization }); mediaHandler(req, res, body, calls); });
+    // Network issues OpenRestream's service token for audience openvibe.media.
+    const network = await stub((req, res, body, raw) => {
+        const p = new URLSearchParams(raw);
+        assert.strictEqual(p.get('grant_type'), 'client_credentials');
+        reply(res, 200, { access_token: `svc-${p.get('audience')}`, token_type: 'Bearer', expires_in: 300 });
+    });
     const clock = manualClock();
-    const rt = await runtime({ clock, env: { MEDIA_URL: media.url, MEDIA_API_KEY: 'k-live', OPENRE_RECORDING_START_DELAY_MS: '0' } });
+    const rt = await runtime({ clock, env: { MEDIA_URL: media.url, OV_NETWORK_INTERNAL_URL: network.url, OV_OAUTH_CLIENT_SECRET: 's3cret', OPENRE_RECORDING_START_DELAY_MS: '0' } });
     const client = createMediaClient({ config: rt.config });
     const coordinator = createCoordinator({ rt, media: client, log: silent });
     const { definition, key } = await rt.store.definitions.create({ owner_subject: OWNER, title: 'Rec', recording_mode, external_refs: [{ service: 'live', type: 'user', id: '8' }] });
@@ -48,7 +54,7 @@ t('a live session gets one recording request; finalize when it ends (Media final
     await coordinator.tick();
     await coordinator.tick();
     assert.deepStrictEqual(calls.map(c => `${c.method} ${c.url}`), ['POST /api/v1/live/vods', 'POST /api/v1/live/vods/501/ingest/rtmp']);
-    assert.strictEqual(calls[0].auth, 'Bearer k-live');
+    assert.strictEqual(calls[0].auth, 'Bearer svc-openvibe.media', 'OpenRestream\'s service token for Media');
     assert.strictEqual(calls[0].body.user_id, 8);
     assert.strictEqual(calls[0].body.visibility, 'public');
     assert.strictEqual(calls[1].body.rtmp_url, `rtmp://127.0.0.1:19390/live/${session.id}`);

@@ -187,18 +187,21 @@ t('a grabber captures a frame (ffmpeg stdout) and uploads it to Media as an obje
 t('media-client.uploadObject does init → PUT → complete', async () => {
     const calls = [];
     const fetchImpl = async (url, opts = {}) => {
-        calls.push({ url: String(url), method: opts.method || 'GET' });
+        calls.push({ url: String(url), method: opts.method || 'GET', auth: opts.headers && opts.headers.Authorization });
+        if (String(url).endsWith('/oauth/token')) return { ok: true, status: 200, json: async () => ({ access_token: 'svc-media', token_type: 'Bearer', expires_in: 300 }) };
         if (String(url).endsWith('/objects')) return { ok: true, status: 201, text: async () => JSON.stringify({ id: 'o1', upload: { url: 'https://m/o1/content', complete_url: 'https://m/o1/complete', method: 'PUT' } }) };
         if (String(url).endsWith('/o1/content')) return { ok: true, status: 200, text: async () => '' };
         if (String(url).endsWith('/o1/complete')) return { ok: true, status: 200, text: async () => JSON.stringify({ object: { id: 'o1', public_url: 'https://media.test/o/o1' } }) };
         return { ok: false, status: 404, text: async () => '{}' };
     };
-    const config = load({ MEDIA_URL: 'http://127.0.0.1:4100', MEDIA_API_KEY: 'k'.repeat(40), MEDIA_APP_ID: 'live' });
+    const config = load({ MEDIA_URL: 'http://127.0.0.1:4100', OV_OAUTH_CLIENT_SECRET: 's'.repeat(40), MEDIA_APP_ID: 'live' });
     const media = createMediaClient({ config, fetchImpl });
     const r = await media.uploadObject({ namespace: 'live', mimeType: 'image/jpeg', filename: 'x.jpg', bytes: Buffer.alloc(10, 1) });
     assert.strictEqual(r.url, 'https://media.test/o/o1');
-    assert.deepStrictEqual(calls.map(c => c.method), ['POST', 'PUT', 'POST']);
-    assert.ok(calls[0].url.includes('/api/v2/live/objects'));
+    const toMedia = calls.filter(c => !c.url.endsWith('/oauth/token'));
+    assert.deepStrictEqual(toMedia.map(c => c.method), ['POST', 'PUT', 'POST']);
+    assert.ok(toMedia[0].url.includes('/api/v2/live/objects'));
+    assert.strictEqual(toMedia[0].auth, 'Bearer svc-media', 'the object init carries the service token');
 });
 
 t('restream args: webrtcArgs reads the worker\'s SDP file and re-encodes', () => {

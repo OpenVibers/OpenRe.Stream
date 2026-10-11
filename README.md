@@ -96,7 +96,7 @@ Called elsewhere, as the service principal `openre` (client credentials from Net
 |---|---|---|
 | OpenVibe.Events | `events.event.publish` | the coordinator's outbox relay (`openre.*` events) |
 | OpenVibe.Live | `live.lineage.resolve` | the channel a Live-linked stream definition belongs to |
-| OpenVibe.Media | the `live` tenant key today (`MEDIA_API_KEY`); `media.object.upload` once `OPENRE_MEDIA_AUTH=service` | recording requests |
+| OpenVibe.Media | `media.object.upload` (namespace `live`) | recording requests and live thumbnails |
 
 The full grant list, including what Live needs to call OpenRestream, is under "Grants the lead adds in
 Network" below.
@@ -126,7 +126,7 @@ The ids were proposed in [docs/capabilities-proposal/](docs/capabilities-proposa
 - `[openre, events.event.publish, openvibe.events]`
 - `[openre, live.lineage.resolve, openvibe.live]` (the channel lineage of Live-linked streams)
 - `[live, events.subscription.manage, openvibe.events]` if Live creates its own `openre.session.*` subscription (or an operator creates it)
-- Media, only when `OPENRE_MEDIA_AUTH=service`: `[openre, media.object.upload, openvibe.media]` with namespace `live` — and Media must first name that capability on its VOD create/ingest/finalize/delete routes (today they accept only the tenant app key; see "Recording").
+- `[openre, media.object.upload, openvibe.media]` with namespace `live` (recording requests: VOD create, ingest, finalize and the delete of an empty shell; live thumbnails).
 - OAuth client `openre` (authorization code + client credentials) with redirect `https://openre.stream/auth/callback`.
 
 ## Events
@@ -149,7 +149,7 @@ Written to `event_outbox` in the same transaction as the change (openvibe-sdk `c
 
 ## Recording
 
-When a session is live and its definition says `recording_mode` `vod` or `clips`, the coordinator asks Media, exactly as Live's recorder does: `POST /api/v1/<MEDIA_APP_ID>/vods` (title, Live `user_id`/`managed_stream_id` from the typed references so the VOD lands in the Live channel's gallery, visibility, `meta.openre_session_id`), then `POST …/vods/:id/ingest/rtmp { rtmp_url: rtmp://127.0.0.1:<play port>/live/<session id> }`. When the session ends: `POST …/finalize` (clips-only recordings are then deleted, as Live does). A disk-space refusal deletes the empty VOD shell and retries every 5 min while the session is live. Media finalises. Auth today is the Media tenant key (`MEDIA_API_KEY`, the `live` app's key — the interim compromise, as Live holds it too); the target is `OPENRE_MEDIA_AUTH=service` once Media accepts service tokens on those routes. Known gap: the VOD's `stream_id` (a Live id) is not set, because Live creates its `streams` row from the event; Live links the VOD by slot, user and time.
+When a session is live and its definition says `recording_mode` `vod` or `clips`, the coordinator asks Media, exactly as Live's recorder does: `POST /api/v1/<MEDIA_APP_ID>/vods` (title, Live `user_id`/`managed_stream_id` from the typed references so the VOD lands in the Live channel's gallery, visibility, `meta.openre_session_id`), then `POST …/vods/:id/ingest/rtmp { rtmp_url: rtmp://127.0.0.1:<play port>/live/<session id> }`. When the session ends: `POST …/finalize` (clips-only recordings are then deleted, as Live does). A disk-space refusal deletes the empty VOD shell and retries every 5 min while the session is live. Media finalises. Auth is OpenRestream's Network service token (audience `openvibe.media`, grant `media.object.upload` in namespace `live`); the shared tenant key it used until 2026-10-11 is gone. Known gap: the VOD's `stream_id` (a Live id) is not set, because Live creates its `streams` row from the event; Live links the VOD by slot, user and time.
 
 ## Security notes
 

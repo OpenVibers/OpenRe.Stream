@@ -209,11 +209,8 @@ function load(env = process.env) {
             // The Media tenant the recording is filed under. 'live' keeps VODs in the Live
             // channel's gallery (Media still finalises and owns the object, ADR-006).
             appId: env.MEDIA_APP_ID || 'live',
-            // 'key': the tenant's app key (MEDIA_API_KEY), which Media's VOD routes accept today.
-            // 'service': a Network service token (audience openvibe.media) once Media names a
-            // capability on its VOD ingest routes (README "Recording").
-            auth: env.OPENRE_MEDIA_AUTH === 'service' ? 'service' : 'key',
-            apiKey: env.MEDIA_API_KEY || '',
+            // Requests carry OpenRestream's Network service token (audience openvibe.media; grant
+            // media.object.upload, namespace live). The shared tenant key is gone (C-42).
             enabled: env.OPENRE_RECORDING !== 'off',
             startDelayMs: int(env.OPENRE_RECORDING_START_DELAY_MS, 2000),
         },

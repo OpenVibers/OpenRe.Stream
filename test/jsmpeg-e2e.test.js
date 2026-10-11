@@ -118,7 +118,6 @@ t('setup: stubs and the four OpenRestream processes', async () => {
         EVENTS_URL: events,
         EVENTS_RELAY_INTERVAL_MS: '200',
         MEDIA_URL: media,
-        MEDIA_API_KEY: 'media-app-key',
         OPENRE_RECORDING_START_DELAY_MS: '200',
         OPENRE_WORKER_HEARTBEAT_MS: '250',
         OPENRE_WORKER_LEASE_MS: '4000',

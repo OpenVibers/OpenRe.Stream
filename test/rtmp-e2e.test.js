@@ -117,7 +117,6 @@ t('setup: stubs and the four OpenRestream processes', async () => {
         EVENTS_URL: events,
         EVENTS_RELAY_INTERVAL_MS: '200',
         MEDIA_URL: media,
-        MEDIA_API_KEY: 'media-app-key',
         OPENRE_RECORDING_START_DELAY_MS: '300',
         OPENRE_WORKER_HEARTBEAT_MS: '250',
         OPENRE_WORKER_LEASE_MS: '4000',
@@ -184,7 +183,7 @@ t('the working destination goes live, the dead one fails, the session stays live
 t('recording is requested from Media with a loopback URL that carries no key, and Media can pull it', async () => {
     const ingestCall = await waitFor(() => mediaCalls.find(c => c.url.endsWith('/ingest/rtmp')), { what: 'media ingest call', timeoutMs: 10000 });
     const create = mediaCalls.find(c => c.url === '/api/v1/live/vods');
-    assert.strictEqual(create.auth, 'Bearer media-app-key');
+    assert.strictEqual(create.auth, 'Bearer tok-openvibe.media', 'OpenRestream\'s service token, never a tenant key');
     assert.strictEqual(create.body.user_id, 42);
     assert.strictEqual(create.body.managed_stream_id, 5);
     assert.strictEqual(create.body.meta.openre_session_id, sessionA.id);
