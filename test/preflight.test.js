@@ -77,7 +77,7 @@ function host(dbs, over = {}) {
         release: RELEASE,
         originMain: RELEASE,
         containsCommit: true,
-        openreEnv: { OV_OAUTH_CLIENT_ID: 'openre', OV_OAUTH_CLIENT_SECRET: CLIENT_SECRET, OPENRE_SECRETS_KEY: SECRETS_KEY, OPENRE_RTMP_PORT: '1936', OPENRE_RTMP_BIND: '0.0.0.0', OPENRE_RTMP_PUBLIC_HOST: 'ingest.openre.stream', EVENTS_URL: 'http://127.0.0.1:4300', MEDIA_API_KEY: 'm'.repeat(40) },
+        openreEnv: { OV_OAUTH_CLIENT_ID: 'openre', OV_OAUTH_CLIENT_SECRET: CLIENT_SECRET, OPENRE_SECRETS_KEY: SECRETS_KEY, OPENRE_RTMP_PORT: '1936', OPENRE_RTMP_BIND: '0.0.0.0', OPENRE_RTMP_PUBLIC_HOST: 'ingest.openre.stream', EVENTS_URL: 'http://127.0.0.1:4300' },
         liveEnv: { OV_OAUTH_CLIENT_ID: 'live', OV_OAUTH_CLIENT_SECRET: CLIENT_SECRET, OPENRE_URL: 'http://127.0.0.1:4500', OPENRE_PUBLIC_URL: 'https://openre.stream', OPENRE_EVENTS_SECRET: EVENTS_SECRET },
         runningLiveEnv: null, // default: same as liveEnv
         ss: 'LISTEN 0      511          0.0.0.0:1936       0.0.0.0:*\nLISTEN 0 511 127.0.0.1:19360 0.0.0.0:*\n',

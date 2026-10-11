@@ -18,7 +18,7 @@ const { runtime, bootApi, request, serviceToken, tmpDir, testEnv, child, suite, 
 
 const t = suite('drill-mode');
 // What the production env file sets: with these, a non-drill process would publish and record.
-const PROD_LIKE = { EVENTS_URL: 'http://127.0.0.1:9', OV_OAUTH_CLIENT_SECRET: 'x'.repeat(40), MEDIA_URL: 'http://127.0.0.1:9', MEDIA_API_KEY: 'k'.repeat(40) };
+const PROD_LIKE = { EVENTS_URL: 'http://127.0.0.1:9', OV_OAUTH_CLIENT_SECRET: 'x'.repeat(40), MEDIA_URL: 'http://127.0.0.1:9' };
 const reader = serviceToken('live', ['openre.stream.read', 'openre.stream.write', 'openre.session.read']);
 
 t('OPENRE_DRILL parses like the other switches and is off by default', () => {

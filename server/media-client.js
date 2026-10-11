@@ -12,9 +12,9 @@
  * The rtmp_url is the owning worker's loopback play URL (rtmp://127.0.0.1:<port>/live/<session id>):
  * no ingest key ever leaves OpenRestream. Media records and finalises; OpenRestream only asks.
  *
- * Auth: config.media.auth === 'key' sends the tenant app key (MEDIA_API_KEY), which Media's VOD
- * routes accept today. 'service' sends a Network service token (audience openvibe.media); Media's
- * VOD routes do not accept service tokens yet (they name no capability) — see README "Recording".
+ * Auth: OpenRestream's Network service token (client credentials, audience openvibe.media). Media's VOD
+ * routes take it as the write verb (media.object.upload, which also covers the delete of an empty
+ * shell) in namespace live. With no client secret configured there is no token, and recording is off.
  */
 const { createServiceTokenClient } = require('openvibe-sdk/auth');
 
@@ -24,16 +24,15 @@ class MediaError extends Error {
 
 function createMediaClient({ config, fetchImpl = globalThis.fetch }) {
     const base = `${config.media.url}/api/v1/${encodeURIComponent(config.media.appId)}`;
-    const tokens = config.media.auth === 'service' && config.oauth.clientSecret
+    const tokens = config.oauth.clientSecret
         ? createServiceTokenClient({ tokenUrl: `${config.networkInternalUrl}/oauth/token`, clientId: config.oauth.clientId, clientSecret: config.oauth.clientSecret, audience: 'openvibe.media', fetch: fetchImpl })
         : null;
 
     // A restore drill (OPENRE_DRILL) never asks Media for anything.
-    const configured = config.media.enabled && !config.drill && Boolean(config.media.auth === 'service' ? tokens : config.media.apiKey);
+    const configured = config.media.enabled && !config.drill && Boolean(tokens);
 
     async function authHeader() {
-        if (tokens) return { Authorization: `Bearer ${await tokens.getToken()}` };
-        return config.media.apiKey ? { Authorization: `Bearer ${config.media.apiKey}` } : {};
+        return tokens ? { Authorization: `Bearer ${await tokens.getToken()}` } : {};
     }
 
     async function request(method, path, { body, timeoutMs = 15000 } = {}) {

@@ -16,10 +16,9 @@
  *       everything, end sessions).
  *   { kind: 'anonymous' }
  *
- * The capability ids are proposed in docs/capabilities-proposal/ and are not in openvibe-contracts
- * yet. Until the release that defines them, allows() grants them with the contracts rule (exact id
- * or a `family.*` grant) and hands the decision to capabilities.check() once contracts know the id
- * (the same bridge OpenVibe.Events used).
+ * Every openre.* capability id is defined in openvibe-contracts, so a service's grant is decided by
+ * capabilities.check() alone (exact id or a `family.*` grant). The bridge that let an id unknown to
+ * contracts through on the grant alone is gone (compatibility register C-42).
  *
  * The keys are openvibe-sdk/auth createNetworkKeys (server/index.js): a pinned OV_NETWORK_PUBLIC_KEY, or Network's
  * JWKS with a rotation honoured on an unknown kid and the last good keys kept through an outage.
@@ -33,18 +32,6 @@ const PRINCIPAL_SUB = /^(svc|app|mod):/;
 const STAFF_ROLES = new Set(['admin']);
 
 // ── Capabilities ───────────────────────────────────────────────
-
-function hasCap(claims, id) {
-    const granted = claims && Array.isArray(claims.cap) ? claims.cap : [];
-    return granted.some(g => g === id || (g.endsWith('.*') && id.startsWith(g.slice(0, -1))));
-}
-
-function allows(claims, id) {
-    if (!hasCap(claims, id)) return { allowed: false, code: 'capability.denied', reason: `${id} not granted` };
-    const c = capabilities.check(claims, id);
-    if (c.code === 'capability.unknown' && !capabilities.get(id)) return { allowed: true, code: null, reason: null };
-    return c;
-}
 
 // ── Tokens ─────────────────────────────────────────────────────
 
@@ -146,7 +133,7 @@ function createAuth({ config, keys }) {
         return function capGuard(req, res, next) {
             const c = req.caller || { kind: 'anonymous' };
             if (c.kind === 'service') {
-                const r = allows(c.claims, capabilityId);
+                const r = capabilities.check(c.claims, capabilityId);
                 if (!r.allowed) return http.sendProblem(res, 403, r.code, { detail: r.reason, ctx: req.ov });
                 req.capability = capabilityId;
                 return next();
@@ -179,4 +166,4 @@ function createAuth({ config, keys }) {
     return { resolve, middleware, guard, canAccess, actorOf, verifyService, verifyUser };
 }
 
-module.exports = { createAuth, allows, hasCap, bearer, cookie, AuthError };
+module.exports = { createAuth, bearer, cookie, AuthError };
